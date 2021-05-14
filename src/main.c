@@ -63,6 +63,10 @@ extern int log_slave_init(void);
 /*
  * the initialization order of all the modules
  */
+extern int
+ifstate_init(void);
+extern int
+ifstate_term(void);
 #define DPVS_MODULES {                                          \
         DPVS_MODULE(MODULE_FIRST,       "scheduler",            \
                     dpvs_scheduler_init, dpvs_scheduler_term),  \
@@ -98,7 +102,9 @@ extern int log_slave_init(void);
                     netif_ctrl_init,     netif_ctrl_term),      \
         DPVS_MODULE(MODULE_IFTRAF,      "iftraf",               \
                     iftraf_init,         iftraf_term),          \
-        DPVS_MODULE(MODULE_LAST,        "iftraf",               \
+        DPVS_MODULE(MODULE_IFSTAT,      "ifstate",               \
+                    ifstate_init,         ifstate_term),          \
+        DPVS_MODULE(MODULE_LAST,        "ifstate",               \
                     eal_mem_init,        eal_mem_term)          \
     }
 
@@ -242,6 +248,8 @@ static int parse_app_args(int argc, char **argv)
     return ret;
 }
 
+void
+cmd_init(void);
 int main(int argc, char *argv[])
 {
     int err, nports;
@@ -328,9 +336,10 @@ int main(int argc, char *argv[])
 
     dpvs_state_set(DPVS_STATE_NORMAL);
 
+    cmd_init();
+    ctflow_console_job_start();
     /* start control plane thread loop */
     dpvs_lcore_start(1);
-
 end:
     dpvs_state_set(DPVS_STATE_FINISH);
     modules_term();

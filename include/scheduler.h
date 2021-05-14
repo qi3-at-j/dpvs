@@ -68,4 +68,7 @@ int dpvs_lcore_start(int is_master);
 int dpvs_scheduler_init(void);
 int dpvs_scheduler_term(void);
 
+int
+ctflow_console_job_start(void);
+
 #endif

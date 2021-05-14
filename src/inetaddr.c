@@ -28,6 +28,9 @@
 #include "inetaddr.h"
 #include "conf/inetaddr.h"
 
+#include "parser/cmdline_parse.h"
+#include "parser/cmdline.h"
+
 #define IFA
 #define RTE_LOGTYPE_IFA         RTE_LOGTYPE_USER1
 
@@ -1801,6 +1804,44 @@ static struct dpvs_sockopts ifa_sockopts = {
     .get            = ifa_sockopt_get,
 };
 
+static int
+set_address_cli(cmd_blk_t *cbt)
+{
+	int i;
+	tyflow_cmdline_printf(cbt->cl, "number cnt: %d\n", cbt->number_cnt);
+	for (i=0; i<cbt->number_cnt; i++) {
+		tyflow_cmdline_printf(cbt->cl, "\t%d: %d\n", i, cbt->number[i]);
+	}
+	tyflow_cmdline_printf(cbt->cl, "which cnt: %d\n", cbt->which_cnt);
+	for (i=0; i<cbt->which_cnt; i++) {
+		tyflow_cmdline_printf(cbt->cl, "\t%d: %d\n", i, cbt->which[i]);
+	}
+	tyflow_cmdline_printf(cbt->cl, "string cnt: %d\n", cbt->string_cnt);
+	for (i=0; i<cbt->string_cnt; i++) {
+		tyflow_cmdline_printf(cbt->cl, "\t%d: %s\n", i, cbt->string[i]);
+	}
+	return 0;
+}
+
+EOL_NODE(address_eol, set_address_cli);
+KW_NODE_WHICH(address_scope_type_global, address_eol, none, "global", "the global scope", 2, 3);
+KW_NODE_WHICH(address_scope_type_link, address_eol, address_scope_type_global, "link", "the link scope", 2, 2);
+KW_NODE_WHICH(address_scope_type_host, address_eol, address_scope_type_link, "host", "the host scope", 2, 1);
+VALUE_NODE(address_valid_lft_value, address_eol, none, "set the life time", 1, NUM);
+KW_NODE_WHICH(address_sapool, address_eol, address_eol, "sapool", "make the address as sapool", 1, 3);
+KW_NODE_WHICH(address_scope, address_scope_type_host, address_sapool, "scope", "define the address scope", 1, 2);
+KW_NODE_WHICH(address_valid_lft, address_valid_lft_value, address_scope, "valid_lft", "valid life time", 1, 1);
+VALUE_NODE(address_interface_name, address_valid_lft, none, "interface name", 2, STR);
+KW_NODE(address_interface, address_interface_name, none, "interface", "the specific interface");
+VALUE_NODE(address_ip, address_interface, none, "ip address", 1, STR);
+KW_NODE(address, address_ip, none, "address", "ip address");
+
+static void
+inet_addr_cli_init(void)
+{
+	add_set_cmd(&cnode(address));
+}
+
 int inet_addr_init(void)
 {
     lcoreid_t cid;
@@ -1853,6 +1894,7 @@ int inet_addr_init(void)
         }
     }
 
+	inet_addr_cli_init();
     return EDPVS_OK;
 }
 

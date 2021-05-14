@@ -239,9 +239,32 @@ static int dpvs_job_loop(void *arg)
     return EDPVS_OK;
 }
 
+/* master handling thread */
+static pthread_t ctflow_console_thread;
+extern void *
+console_entry(void *args);
+int
+ctflow_console_job_start(void)
+{
+	int ret;
+
+	ret = pthread_create(&ctflow_console_thread, NULL, console_entry, NULL);
+	if (ret) {
+		RTE_LOG(ERR, DSCHED, "faile to create console\n");
+		return -1;
+	}
+
+	ret = rte_thread_setname(ctflow_console_thread, "ctflow-console");
+	if (ret < 0)
+		RTE_LOG(DEBUG, DSCHED, "Failed to set name for ctflow-console thread\n");
+
+	return 0;
+}
+
 int dpvs_lcore_start(int is_master)
 {
-    if (is_master)
-        return dpvs_job_loop(NULL);
+    if (is_master) {
+        dpvs_job_loop(NULL);
+	}
     return rte_eal_mp_remote_launch(dpvs_job_loop, NULL, SKIP_MASTER);
 }

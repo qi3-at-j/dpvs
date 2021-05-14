@@ -44,6 +44,9 @@
 #include <arpa/inet.h>
 #include <ipvs/redirect.h>
 
+#include "parser/cmdline_parse.h"
+#include "parser/cmdline.h"
+
 #define NETIF_PKTPOOL_NB_MBUF_DEF   65535
 #define NETIF_PKTPOOL_NB_MBUF_MIN   1023
 #define NETIF_PKTPOOL_NB_MBUF_MAX   134217727
@@ -1253,7 +1256,7 @@ static void port_index_init(void)
             port2index[cid][pid] = tk++;
         }
     }
-#ifdef CONFIG_DPVS_NETIF_DEBUG
+#ifdef CONFIG_DPVS_NETIF_DEBUG_X
     printf("port fast searching table(port2index[cid][pid]): \n");
     for (ii = 0; ii < DPVS_MAX_LCORE; ii++) {
         for (jj = 0; jj < NETIF_MAX_PORTS; jj++)
@@ -1473,14 +1476,14 @@ static int check_lcore_conf(int lcores, const struct netif_lcore_conf *lcore_con
     for (i = 0; i < nports; i++) {
         nqueues = port_rx_queues_get(i);
         for (j = 0; j < nqueues; j++) {
-            //printf("[dpdk%d:rx%d] %d    ", i, j, mark.pqs[i].rxqs[j].id);
+            printf("[dpdk%d:rx%d] %d    ", i, j, mark.pqs[i].rxqs[j].id);
             if (LCONFCHK_MARK != mark.pqs[i].rxqs[j].id) {
                 return LCONFCHK_DISCONTINUOUS_QUEUE_ID;
             }
         }
         nqueues = port_tx_queues_get(i);
         for (j = 0; j < nqueues; j++) {
-            //printf("[dpdk%d:tx%d] %d    ", i, j, mark.pqs[i].txqs[j].id);
+            printf("[dpdk%d:tx%d] %d    ", i, j, mark.pqs[i].txqs[j].id);
             if (LCONFCHK_MARK != mark.pqs[i].txqs[j].id) {
                 return LCONFCHK_DISCONTINUOUS_QUEUE_ID;
             }
@@ -1651,6 +1654,54 @@ bool netif_lcore_is_fwd_worker(lcoreid_t cid)
             LCORE_ROLE_FWD_WORKER) ? true : false;
 }
 
+#ifdef CONFIG_DPVS_NETIF_DEBUG
+#define HEXDUMP_BYTES_PER_LINE 16
+static int
+print_hex (const char *fmt, ...)
+{
+	va_list args;
+	int ret;
+	va_start(args, fmt);
+	ret = vfprintf(stdout, fmt, args);
+	va_end(args);
+	return (ret);
+}
+
+#define EXTRACT_U_1(p)  ((uint8_t)(*(p))) 
+#define get_u_1(p) EXTRACT_U_1(p)
+#define GET_U_1(p) get_u_1((const u_char *)(p))
+
+static void
+rte_print_hex(uint32_t size, const char *output)
+{
+	const char *fmt0 = "%s0x%04x: ";
+	const char *fmt1 = " %02x%02x";
+
+	uint32_t nshorts = size / sizeof(short);
+	uint32_t i = 0;
+	uint32_t oset = 0;
+	uint8_t b;
+
+	while (nshorts != 0) {
+		if ((i++ % 8) == 0) {
+			print_hex(fmt0, "\n\t", oset); 
+			oset += HEXDUMP_BYTES_PER_LINE;
+		}
+		b = GET_U_1(output);
+		output++;
+		print_hex(fmt1, b, GET_U_1(output));
+		output++;
+		nshorts--;
+	}
+	if (size & 1) {
+		if ((i % 8) == 0)
+			print_hex(fmt0, "\n\t", oset);
+		print_hex(" %02x", GET_U_1(output));
+	}
+	print_hex("%s", "\n");
+}
+#endif
+
 static inline uint16_t netif_rx_burst(portid_t pid, struct netif_queue_conf *qconf)
 {
     struct rte_mbuf *mbuf;
@@ -1669,6 +1720,15 @@ static inline uint16_t netif_rx_burst(portid_t pid, struct netif_queue_conf *qco
          * processing lcore ? No! we just leave the work to tools */
     } else {
         nrx = rte_eth_rx_burst(pid, qconf->id, qconf->mbufs, NETIF_MAX_PKT_BURST);
+#ifdef CONFIG_DPVS_NETIF_DEBUG
+		if (nrx) {
+			RTE_LOG(WARNING, NETIF, "%s: received %d packets!\n", __func__, nrx);
+			RTE_LOG(WARNING, NETIF, "\tprint the first packet:\n");
+			void *mac = rte_pktmbuf_mtod_offset(qconf->mbufs[0], struct ether_hdr*, 0);
+			rte_print_hex(54, mac);
+			parse_ipv4_hdr(qconf->mbufs[0], 0, 0);
+		}
+#endif
     }
 
     qconf->len = nrx;
@@ -5181,6 +5241,44 @@ struct dpvs_sockopts netif_sockopt = {
     .set = netif_sockopt_set,
 };
 
+static int
+set_interface_cli(cmd_blk_t *cbt)
+{
+	int i;
+	tyflow_cmdline_printf(cbt->cl, "number cnt: %d\n", cbt->number_cnt);
+	for (i=0; i<cbt->number_cnt; i++) {
+		tyflow_cmdline_printf(cbt->cl, "\t%d: %d\n", i, cbt->number[i]);
+	}
+	tyflow_cmdline_printf(cbt->cl, "which cnt: %d\n", cbt->which_cnt);
+	for (i=0; i<cbt->which_cnt; i++) {
+		tyflow_cmdline_printf(cbt->cl, "\t%d: %d\n", i, cbt->which[i]);
+	}
+	tyflow_cmdline_printf(cbt->cl, "string cnt: %d\n", cbt->string_cnt);
+	for (i=0; i<cbt->string_cnt; i++) {
+		tyflow_cmdline_printf(cbt->cl, "\t%d: %s\n", i, cbt->string[i]);
+	}
+	return 0;
+}
+
+EOL_NODE(interface_eol, set_interface_cli);
+KW_NODE_WHICH(interface_link_down, interface_eol, none, "down", "make the interface link down", 2, 2);
+KW_NODE_WHICH(interface_link_up, interface_eol, interface_link_down, "up", "make the interface link up", 2, 1);
+KW_NODE_WHICH(interface_kni_off, interface_eol, none, "off", "forward2kni off", 2, 2);
+KW_NODE_WHICH(interface_kni_on, interface_eol, interface_kni_off, "on", "forward2kni on", 2, 1);
+KW_NODE_WHICH(interface_promisc_off, interface_eol, none, "off", "promisc off", 2, 2);
+KW_NODE_WHICH(interface_promisc_on, interface_eol, interface_promisc_off, "on", "promisc on", 2, 1);
+KW_NODE_WHICH(interface_link, interface_link_up, none, "link", "interface link state", 1, 3);
+KW_NODE_WHICH(interface_kni, interface_kni_on, interface_link, "forward2kni", "make the interface forward2kni", 1, 2);
+KW_NODE_WHICH(interface_promisc, interface_promisc_on, interface_kni, "promisc", "the promisc on the interface", 1, 1);
+VALUE_NODE(interface_name, interface_promisc, none, "interface name", 1, STR);
+KW_NODE(interface, interface_name, none, "interface", "the specific interface");
+
+static void
+netif_cli_init(void)
+{
+    add_set_cmd(&cnode(interface));
+}
+
 int netif_ctrl_init(void)
 {
     int err;
@@ -5194,6 +5292,8 @@ int netif_ctrl_init(void)
 
     if ((err = lcore_stats_msg_init()) != EDPVS_OK)
         return err;
+
+    netif_cli_init();
 
     return EDPVS_OK;
 }

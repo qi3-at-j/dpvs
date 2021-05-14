@@ -44,6 +44,8 @@ include $(SRCDIR)/dpdk.mk
 
 INCDIRS += -I $(SRCDIR)/../include
 
+CFLAGS += -g
+# CFLAGS += -DCONFIG_DPVS_NETIF_DEBUG
 # for dpvs main program.
 CFLAGS += -D __DPVS__ -DDPVS_VERSION=\"$(VERSION_STRING)\" -DDPVS_BUILD_DATE=\"$(DATE_STRING)\"
 
@@ -55,13 +57,14 @@ ifeq ($(shell test $(GCC_VERSION) -ge 70 && echo 1), 1)
 	CFLAGS += -Wstringop-overflow=0
 endif
 
-ifeq ($(DEBUG),)
-	CFLAGS += -O3
-else
-	CFLAGS += -g -O0 -D DEBUG
-	CFLAGS += -rdynamic
-endif
+# ifeq ($(DEBUG),)
+#	CFLAGS += -O3
+# else
+#	CFLAGS += -g -O0 -D DEBUG
+#	CFLAGS += -rdynamic
+# endif
 
+CFLAGS += -g -O0 
 LIBS += -lpthread -lnuma
 
 CFLAGS += $(INCDIRS) $(LIBS)
