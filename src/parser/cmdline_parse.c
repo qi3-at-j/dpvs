@@ -434,9 +434,11 @@ tyflow_cmdline_complete(struct cmdline *cl, const char *buf, int *action, char *
             partial_len++;
         }
     }
+    /*
     if (*partial_buf == 0) {
         *action = CA_NOTIFY;
     }
+    */
 
     node = cnode(root).child;
     curbuf = buf;
@@ -475,7 +477,13 @@ tyflow_cmdline_complete(struct cmdline *cl, const char *buf, int *action, char *
             if (node_partial_match[0]->type == CMD_NODE_TYPE_KW) {
                 snprintf(dst+len, size-len, "%s ", node_partial_match[0]->token+partial_len);
             } else {
-                *dst = ' ';
+                if (*partial_buf) {
+                    *dst = ' ';
+                } else {
+                    char *token = cmd_get_value_node_token(node_partial_match[0]);
+                    *action = CA_NOTIFY;
+                    snprintf(dst+len, size-len, "%-24s%s\r\n", token, node_partial_match[0]->help);
+                }
             }
         } else {
             if (node_partial_match[0]->type == CMD_NODE_TYPE_KW) {
