@@ -1654,54 +1654,6 @@ bool netif_lcore_is_fwd_worker(lcoreid_t cid)
             LCORE_ROLE_FWD_WORKER) ? true : false;
 }
 
-#ifdef CONFIG_DPVS_NETIF_DEBUG
-#define HEXDUMP_BYTES_PER_LINE 16
-static int
-print_hex (const char *fmt, ...)
-{
-	va_list args;
-	int ret;
-	va_start(args, fmt);
-	ret = vfprintf(stdout, fmt, args);
-	va_end(args);
-	return (ret);
-}
-
-#define EXTRACT_U_1(p)  ((uint8_t)(*(p))) 
-#define get_u_1(p) EXTRACT_U_1(p)
-#define GET_U_1(p) get_u_1((const u_char *)(p))
-
-static void
-rte_print_hex(uint32_t size, const char *output)
-{
-	const char *fmt0 = "%s0x%04x: ";
-	const char *fmt1 = " %02x%02x";
-
-	uint32_t nshorts = size / sizeof(short);
-	uint32_t i = 0;
-	uint32_t oset = 0;
-	uint8_t b;
-
-	while (nshorts != 0) {
-		if ((i++ % 8) == 0) {
-			print_hex(fmt0, "\n\t", oset); 
-			oset += HEXDUMP_BYTES_PER_LINE;
-		}
-		b = GET_U_1(output);
-		output++;
-		print_hex(fmt1, b, GET_U_1(output));
-		output++;
-		nshorts--;
-	}
-	if (size & 1) {
-		if ((i % 8) == 0)
-			print_hex(fmt0, "\n\t", oset);
-		print_hex(" %02x", GET_U_1(output));
-	}
-	print_hex("%s", "\n");
-}
-#endif
-
 static inline uint16_t netif_rx_burst(portid_t pid, struct netif_queue_conf *qconf)
 {
     struct rte_mbuf *mbuf;

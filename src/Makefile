@@ -67,7 +67,7 @@ endif
 CFLAGS += -g -O0 
 LIBS += -lpthread -lnuma
 
-CFLAGS += $(INCDIRS) $(LIBS)
+CFLAGS += $(INCDIRS) $(LIBS) -fgnu89-inline
 
 OBJS := $(shell find $(SRCDIR) -name '*.c' | sort)
 OBJS := $(patsubst %.c,%.o,$(OBJS))

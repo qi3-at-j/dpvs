@@ -134,11 +134,11 @@ parse_it:
 		switch (node->type) {
 			case CMD_NODE_TYPE_KW:
 				switch (node->subtype) {
-					case KW_TYPE_WHICH:
+					case CMD_KW_TYPE_WHICH:
 						cmd_blk->which_cnt++;
 						cmd_blk->which[node->index-1] = node->value;
 						break;
-					case KW_TYPE_NORMAL:
+					case CMD_KW_TYPE_SET:
 					default:
 						break;
 				}
@@ -541,9 +541,13 @@ cmd_node_t *root_cmd = &cnode(root);
 cmd_node_t *last_top_cmd = NULL;
 cmd_node_t *last_set_cmd = NULL;
 cmd_node_t *last_get_cmd = NULL;
+cmd_node_t *last_debug_cmd = NULL;
 
 KW_NODE(set, none, none, "set", "configure system parameters");
+KW_NODE_UNSET(unset, none, none, "unset", "unconfigure system parameters");
 KW_NODE(get, none, none, "show", "show system infomation");
+KW_NODE_DEBUG(debug, none, none, "debug", "debug system modules");
+KW_NODE_UNDEB(undebug, none, none, "undebug", "undebug system modules");
 
 static void
 add_cmd(cmd_node_t *node, cmd_node_t **last, cmd_node_t *top)
@@ -575,9 +579,28 @@ add_get_cmd(cmd_node_t *node)
 }
 
 void
+add_debug_cmd(cmd_node_t *node)
+{
+	add_cmd(node, &last_debug_cmd, &cnode(debug));
+}
+
+void
 cmd_init(void)
 {
-	add_top_cmd(&cnode(set));
-	add_top_cmd(&cnode(get));
 	add_top_cmd(&cnode(exit));
+	add_top_cmd(&cnode(get));
+	add_top_cmd(&cnode(set));
+}
+
+static void
+cmd_dup_child(cmd_node_t *dst, cmd_node_t *src)
+{
+    dst->child = src->child;
+}
+
+void
+cmd_init2(void)
+{
+    add_top_cmd(&cnode(unset));
+    cmd_dup_child(&cnode(unset), &cnode(set));
 }

@@ -236,8 +236,11 @@ typedef struct cmd_blk_ {
 #define CMD_NODE_TYPE_NONE 0
 #define CMD_NODE_TYPE_ROOT 1
 #define CMD_NODE_TYPE_KW 2
-    #define KW_TYPE_NORMAL 1
-    #define KW_TYPE_WHICH  2
+    #define CMD_KW_TYPE_SET    1
+    #define CMD_KW_TYPE_WHICH  2
+    #define CMD_KW_TYPE_UNSET  3
+    #define CMD_KW_TYPE_DEBUG  4
+    #define CMD_KW_TYPE_UNDEB  5
 #define CMD_NODE_TYPE_STR 3
 #define CMD_NODE_TYPE_NUM 4
 #define CMD_NODE_TYPE_EOL 5
@@ -268,7 +271,7 @@ exnode(exit);
 		&cnode(child),         \
 		&cnode(sibl),          \
 		CMD_NODE_TYPE_KW,      \
-		KW_TYPE_NORMAL,        \
+		CMD_KW_TYPE_SET,       \
 		0,                     \
 		0,                     \
 		kw,                    \
@@ -293,12 +296,48 @@ exnode(exit);
 		&cnode(child),         \
 		&cnode(sibl),          \
 		CMD_NODE_TYPE_KW,      \
-		KW_TYPE_WHICH,         \
+		CMD_KW_TYPE_WHICH,     \
 		index,                 \
 		which,                 \
 		kw,                    \
 		help                   \
 	}
+
+#define KW_NODE_UNSET(node, child, sibl, kw, help) \
+	cmd_node_t cnode(node) = { \
+		&cnode(child),         \
+		&cnode(sibl),          \
+		CMD_NODE_TYPE_KW,      \
+		CMD_KW_TYPE_UNSET,     \
+		0,                     \
+		0,                     \
+		kw,                    \
+		help                   \
+	};
+
+#define KW_NODE_DEBUG(node, child, sibl, kw, help) \
+	cmd_node_t cnode(node) = { \
+		&cnode(child),         \
+		&cnode(sibl),          \
+		CMD_NODE_TYPE_KW,      \
+		CMD_KW_TYPE_DEBUG,     \
+		0,                     \
+		0,                     \
+		kw,                    \
+		help                   \
+	};
+
+#define KW_NODE_UNDEB(node, child, sibl, kw, help) \
+	cmd_node_t cnode(node) = { \
+		&cnode(child),         \
+		&cnode(sibl),          \
+		CMD_NODE_TYPE_KW,      \
+		CMD_KW_TYPE_UNDEB,     \
+		0,                     \
+		0,                     \
+		kw,                    \
+		help                   \
+	};
 
 #define VALUE_NODE(node, child, sibl, help, index, type) \
 	cmd_node_t cnode(node) = { \
