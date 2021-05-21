@@ -16,29 +16,21 @@
 #
 
 #
-# Makefile for tools
+# Makefile for dpip
 #
-SUBDIRS = keepalived ipvsadm dpip ud_sock
 
-all: config
-	for i in $(SUBDIRS); do $(MAKE) -C $$i || exit 1; done
+TARGET = build/test_tyflow_ud_sock
 
-config: keepalived_conf
+CFLAGS = -g -O0
+CFLAGS += -Wall -Werror -Wstrict-prototypes -Wmissing-prototypes
 
-keepalived_conf:
-	if [ ! -f keepalived/Makefile ]; then \
-		cd keepalived; \
-		if [ ! -f keepalived/configure ]; then \
-			./build_setup; \
-		fi; \
-		./configure; \
-		cd -; \
-	fi
+OBJS = test_tyflow_ud_sock.o 
+
+all: $(TARGET)
+
+$(TARGET): $(OBJS)
+	-mkdir -p ./build/
+	gcc $(CFLAGS) -o $@ $^ 
 
 clean:
-	for i in $(SUBDIRS); do $(MAKE) -C $$i clean || exit 1; done
-
-install:
-	install -m 744 keepalived/bin/keepalived $(INSDIR)/keepalived
-	install -m 744 ipvsadm/ipvsadm $(INSDIR)/ipvsadm
-	install -m 744 dpip/build/dpip $(INSDIR)/dpip
+	rm -rf ./build/ *.o

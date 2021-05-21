@@ -23,8 +23,8 @@
 
 #include <rte_string_fns.h>
 
-#include "cmdline_parse.h"
-#include "cmdline_parse_ipaddr.h"
+#include "parser/flow_cmdline_parse.h"
+#include "parser/flow_cmdline_parse_ipaddr.h"
 
 struct cmdline_token_ops tyflow_cmdline_token_ipaddr_ops = {
 	.parse = tyflow_cmdline_parse_ipaddr,

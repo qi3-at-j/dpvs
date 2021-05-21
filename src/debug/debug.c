@@ -26,6 +26,8 @@
 #include "dpdk.h"
 #include "sys_time.h"
 #include "debug.h"
+#include "parser/flow_cmdline_parse.h"
+#include "parser/flow_cmdline.h"
 
 RTE_DEFINE_PER_LCORE(uint64_t, cycles_start);
 RTE_DEFINE_PER_LCORE(uint64_t, cycles_stop);
@@ -77,13 +79,50 @@ int dpvs_timing_get(void)
     return (timing_cycle_var2 - timing_cycle_var1) * 1000000 / g_cycles_per_sec;
 }
 
+#define DEBUG_MAX_LINE_LEN     256
+#define DEBUG_MAX_LINE_CNT     8192
+#define DEBUG_MAX_BUF_LEN      (DEBUG_MAX_LINE_LEN<<2)
+
+rte_atomic32_t debug_index;
+char debug_global_buffer[DEBUG_MAX_LINE_CNT][DEBUG_MAX_LINE_LEN];
+
+static void
+debug_write_2_buffer(char *string)
+{
+    lcoreid_t cid;
+    uint32_t sid;
+    time_t tm;
+    uint32_t hdr_len, body_len, n, start, i;
+    char buf[DEBUG_MAX_LINE_LEN] = {0};
+
+    cid = rte_lcore_id();
+    sid = rte_socket_id();
+    tm  = sys_current_time();
+    hdr_len = snprintf(buf, DEBUG_MAX_LINE_LEN, "[T%d@%d] %d: ", cid, sid, (uint32_t)tm);
+    body_len = strlen(string);
+    n = 1;
+    while ((body_len+hdr_len+n) >= n*DEBUG_MAX_LINE_LEN)
+        n++;
+
+    start = rte_atomic32_add_return(&debug_index, n) - n;
+    i = snprintf(debug_global_buffer[start], DEBUG_MAX_LINE_LEN, "%s%s", buf, string);
+    if (i >= DEBUG_MAX_LINE_LEN) {
+        char *bp = string+DEBUG_MAX_LINE_LEN-1-hdr_len;
+        while (--n && i >= DEBUG_MAX_LINE_LEN && start<DEBUG_MAX_LINE_CNT-1) {
+            i = snprintf(debug_global_buffer[++start], DEBUG_MAX_LINE_LEN, "%s", bp);
+        }
+    }
+}
+
 #define HEXDUMP_BYTES_PER_LINE 16
 static int
-print_hex (char *dst, const char *fmt, ...)
+print_hex (const char *fmt, ...)
 {
     char buf[DEBUG_MAX_LINE_LEN];
 	va_list args;
 	int ret;
+    if (rte_atomic32_read(&debug_index) >= DEBUG_MAX_LINE_CNT)
+        return -1;
 	va_start(args, fmt);
 	ret = vsnprintf(buf, DEBUG_MAX_LINE_LEN, fmt, args);
 	va_end(args);
@@ -100,53 +139,69 @@ debug_print_hex(const char *output, uint32_t size)
 {
 	const char *fmt0 = "%s0x%04x: ";
 	const char *fmt1 = " %02x%02x";
+    char line[64];
 
 	uint32_t nshorts = size / sizeof(short);
-	uint32_t i = 0;
+	uint32_t i = 0, len = 0;
 	uint32_t oset = 0;
 	uint8_t b;
 
 	while (nshorts != 0) {
 		if ((i++ % 8) == 0) {
-			print_hex(fmt0, "\n\t", oset); 
+            if (len) {
+                print_hex("%s\n", line);
+            }
+            memset(line, 0, sizeof(line));
+            len = 0;
+            len = snprintf(line, sizeof(line), fmt0, "\t", oset);
+			//print_hex(fmt0, "\n\t", oset); 
 			oset += HEXDUMP_BYTES_PER_LINE;
 		}
 		b = GET_U_1(output);
 		output++;
-		print_hex(fmt1, b, GET_U_1(output));
+        len += snprintf(line+len, sizeof(line)-len, fmt1, b, GET_U_1(output));
+		//print_hex(fmt1, b, GET_U_1(output));
 		output++;
 		nshorts--;
 	}
 	if (size & 1) {
-		if ((i % 8) == 0)
-			print_hex(fmt0, "\n\t", oset);
-		print_hex(" %02x", GET_U_1(output));
+		if ((i % 8) == 0) {
+            if (len) {
+                print_hex("%s\n", line);
+            }
+            memset(line, 0, sizeof(line));
+            len = 0;
+            len = snprintf(line, sizeof(line), fmt0, "\t", oset);
+        }
+			//print_hex(fmt0, "\n\t", oset);
+        snprintf(line+len, sizeof(line)-len, " %02x", GET_U_1(output));
+		//print_hex(" %02x", GET_U_1(output));
 	}
 	print_hex("%s", "\n");
 }
 
 void
-debug_trace_packet_mac(rte_mbuf *mbuf)
+debug_trace_packet_mac(struct rte_mbuf *mbuf)
 {
     void *mac = rte_pktmbuf_mtod_offset(mbuf, struct ether_hdr*, 0);
     debug_print_hex(mac, 54);
 }
 
 void
-debug_trace_packet_ip(rte_mbuf *mbuf)
+debug_trace_packet_ip(struct rte_mbuf *mbuf)
 {
     void *ip = rte_pktmbuf_mtod_offset(mbuf, struct ipv4_hdr *, sizeof(struct ether_hdr));
     debug_print_hex(ip, 40);
 }
 
-int
+void
 debug_trace(const char *fmt, ...)
 {
     char buf[DEBUG_MAX_BUF_LEN];
     va_list args;
     int ret;
     if (rte_atomic32_read(&debug_index) >= DEBUG_MAX_LINE_CNT)
-        return -1;
+        return;
     va_start(args, fmt);
     ret = vsnprintf(buf, DEBUG_MAX_BUF_LEN, fmt, args);
     va_end(args);
@@ -159,41 +214,41 @@ debug_trace(const char *fmt, ...)
     debug_write_2_buffer(buf);
 }
 
-static void
-debug_write_2_buffer(char *string)
+static int
+show_debug_trace(cmd_blk_t *cbt)
 {
-    lcoreid_t cid;
-    uint32_t sid;
-    time_t tm;
-    uint32_t hdr_len, body_len, n, start, i;
-    char buf[DEBUG_MAX_LINE_LEN] = {0};
+    uint32_t i, j;
 
-    cid = rte_lcore_id();
-    sid = rte_socket_id();
-    tm  = sys_current_time();
-    hdr_len = snprintf(buf, "[T%d@%d] %d: ", cid, sid, (uint32_t)tm);
-    body_len = strlen(string);
-    n = 1;
-    while ((body_len+hdr_len+n) >= n*DEBUG_MAX_LINE_LEN)
-        n++;
-
-    start = rte_atomic32_read(&debug_index);
-    rte_atomic32_add(&debug_index, n);
-    i = snprintf(debug_global_buffer[start], DEBUG_MAX_LINE_LEN, "%s%s", buf, string);
-    if (i >= DEBUG_MAX_LINE_LEN) {
-        char *bp = string+DEBUG_MAX_LINE_LEN-1-hdr_len;
-        while (--n && i >= DEBUG_MAX_LINE_LEN && start<DEBUG_MAX_LINE_CNT-1) {
-            i = snprintf(debug_global_buffer[++start], DEBUG_MAX_LINE_LEN, "%s", bp);
-        }
+    j = rte_atomic32_read(&debug_index);
+    j = (j>=DEBUG_MAX_LINE_CNT)?DEBUG_MAX_LINE_CNT:j;
+    for (i=0; i<j; i++) {
+        tyflow_cmdline_printf(cbt->cl, "%s", debug_global_buffer[i]);
     }
+    return 0;
 }
 
-rte_atomic32_t debug_index;
-char debug_global_buffer[DEBUG_MAX_LINE_CNT][DEBUG_MAX_LINE_LEN];
+EOL_NODE(debug_trace_eol, show_debug_trace);
+KW_NODE(debug_trace, debug_trace_eol, none, "trace", "show debug trace");
+KW_NODE(get_debug, debug_trace, none, "debug", "show debug");
+
+static int
+clear_debug_trace(cmd_blk_t *cbt)
+{
+    uint32_t j;
+
+    j = rte_atomic32_read(&debug_index);
+    j = (j>=DEBUG_MAX_LINE_CNT)?DEBUG_MAX_LINE_CNT:j;
+    rte_atomic32_set(&debug_index, 0);
+    tyflow_cmdline_printf(cbt->cl, "clear %d lines of trace\n", j);
+    return 0;
+}
+EOL_NODE(debug_trace2_eol, clear_debug_trace);
+KW_NODE(debug_trace2, debug_trace2_eol, none, "trace", "clear debug trace");
+KW_NODE(clear_debug, debug_trace2, none, "debug", "clear debug");
 
 extern void
 debug_flow_init(void);
-static void
+void
 debug_init(void)
 {
     debug_flow_init();
@@ -204,10 +259,8 @@ debug_init(void)
         return;
     }
 #endif
+    add_get_cmd(&cnode(get_debug));
+    add_clear_cmd(&cnode(clear_debug));
     rte_atomic32_set(&debug_index, 0);
-
-    add_top_cmd(&cnode(debug));
-    add_top_cmd(&cnode(undebug));
-    cmd_dup_child(&cnode(undebug), &cnode(debug));
 }
 

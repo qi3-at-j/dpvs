@@ -13,10 +13,10 @@
 #include <fcntl.h>
 #include <termios.h>
 
-#include "cmdline_parse.h"
-#include "cmdline_rdline.h"
-#include "cmdline_socket.h"
-#include "cmdline.h"
+#include "parser/flow_cmdline_parse.h"
+#include "parser/flow_cmdline_rdline.h"
+#include "parser/flow_cmdline_socket.h"
+#include "parser/flow_cmdline.h"
 
 static char *console_prompt = "tyflow > ";
 static int

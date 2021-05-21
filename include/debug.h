@@ -19,6 +19,8 @@
 #ifndef __DPVS_DEBUG_H__
 #define __DPVS_DEBUG_H__
 
+#include "dpdk.h"
+
 #define TRACE_STACK_DEPTH_MAX       16
 
 /* get backtrace for the calling program */
@@ -30,11 +32,13 @@ void dpvs_timing_stop(void);
  * "dpvs_timing_start" and "dpvs_timing_stop" in microsecond */
 int dpvs_timing_get(void);
 
-#define DEBUG_MAX_LINE_LEN     256
-#define DEBUG_MAX_LINE_CNT     8192
-#define DEBUG_MAX_BUF_LEN      DEBUG_MAX_LINE_LEN<<2
-extern rte_atomic32_t debug_index;
-extern int
+extern void
+debug_trace_packet_mac(struct rte_mbuf *mbuf);
+extern void
+debug_trace_packet_ip(struct rte_mbuf *mbuf);
+extern void
 debug_trace(const char *fmt, ...);
+void
+debug_init(void);
 
 #endif

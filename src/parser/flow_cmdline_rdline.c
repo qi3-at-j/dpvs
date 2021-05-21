@@ -12,9 +12,9 @@
 #include <errno.h>
 #include <ctype.h>
 
-#include "cmdline_cirbuf.h"
-#include "cmdline_rdline.h"
-#include "cmdline_vt100.h"
+#include "parser/flow_cmdline_cirbuf.h"
+#include "parser/flow_cmdline_rdline.h"
+#include "parser/flow_cmdline_vt100.h"
 
 static void rdline_puts(struct rdline *rdl, const char *buf);
 static void rdline_miniprintf(struct rdline *rdl,

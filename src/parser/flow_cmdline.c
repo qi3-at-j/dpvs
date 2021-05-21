@@ -16,9 +16,9 @@
 #include <termios.h>
 #include <netinet/in.h>
 
-#include "cmdline_parse.h"
-#include "cmdline_rdline.h"
-#include "cmdline.h"
+#include "parser/flow_cmdline_parse.h"
+#include "parser/flow_cmdline_rdline.h"
+#include "parser/flow_cmdline.h"
 
 static void
 cmdline_valid_buffer(struct rdline *rdl, const char *buf,
@@ -28,7 +28,7 @@ cmdline_valid_buffer(struct rdline *rdl, const char *buf,
 	int ret, space, i;
     char *errstr = NULL;
 	char message[RDLINE_BUF_SIZE] = {0};
-	ret = tyflow_cmdline_parse(cl, buf);
+	ret = tyflow_cmdline_parse(cl, buf, 1);
 	if (ret) {
         if (ret < 0)
             errstr = "^ Incomplete command\n";

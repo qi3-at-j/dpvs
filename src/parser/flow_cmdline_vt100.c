@@ -12,7 +12,7 @@
 #include <ctype.h>
 #include <termios.h>
 
-#include "cmdline_vt100.h"
+#include "parser/flow_cmdline_vt100.h"
 
 const char *tyflow_cmdline_vt100_commands[] = {
 	vt100_up_arr,

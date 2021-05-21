@@ -13,8 +13,8 @@
 #include <errno.h>
 #include <rte_string_fns.h>
 
-#include "cmdline_parse.h"
-#include "cmdline_parse_string.h"
+#include "parser/flow_cmdline_parse.h"
+#include "parser/flow_cmdline_parse_string.h"
 
 struct cmdline_token_ops tyflow_cmdline_token_string_ops = {
 	.parse = NULL,

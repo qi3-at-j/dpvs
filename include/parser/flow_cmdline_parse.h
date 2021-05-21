@@ -152,7 +152,7 @@ typedef cmdline_parse_inst_t *cmdline_parse_ctx_t;
  * function (defined in the context) and returns 0
  * (CMDLINE_PARSE_SUCCESS).
  */
-int tyflow_cmdline_parse(struct cmdline *cl, const char *buf);
+int tyflow_cmdline_parse(struct cmdline *cl, const char *buf, int console);
 
 /**
  * complete() must be called with *state==0 (try to complete) or
@@ -224,6 +224,9 @@ iscomment(char c)
 #define MAX_CMD_STRING_LEN 256
 
 typedef struct cmd_blk_ {
+#define MODE_DO   1
+#define MODE_UNDO 2
+    uint32_t mode;
 	uint32_t number_cnt;
 	uint32_t number[MAX_CMD_NUM];
 	uint32_t which_cnt;
@@ -374,6 +377,12 @@ add_set_cmd(cmd_node_t *node);
 
 extern void
 add_get_cmd(cmd_node_t *node);
+
+extern void
+add_clear_cmd(cmd_node_t *node);
+
+extern void
+add_debug_cmd(cmd_node_t *node);
 
 extern void
 cmd_init(void);

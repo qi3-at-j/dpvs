@@ -8,8 +8,8 @@
 #define _CMDLINE_H_
 
 #include <termios.h>
-#include <cmdline_rdline.h>
-#include <cmdline_parse.h>
+#include "parser/flow_cmdline_rdline.h"
+#include "parser/flow_cmdline_parse.h"
 
 /**
  * @file

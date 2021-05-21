@@ -13,8 +13,8 @@
 #include <errno.h>
 #include <rte_string_fns.h>
 
-#include "cmdline_parse.h"
-#include "cmdline_parse_num.h"
+#include "parser/flow_cmdline_parse.h"
+#include "parser/flow_cmdline_parse_num.h"
 
 #ifdef RTE_LIBRTE_CMDLINE_DEBUG
 #define debug_printf(args...) printf(args)

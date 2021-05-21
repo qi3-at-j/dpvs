@@ -17,10 +17,11 @@
 
 #include <rte_string_fns.h>
 
-#include "cmdline_rdline.h"
-#include "cmdline_parse_string.h"
-#include "cmdline_parse.h"
-#include "cmdline.h"
+#include "parser/flow_cmdline_parse.h"
+#include "parser/flow_cmdline.h"
+#include "parser/flow_cmdline_rdline.h"
+#include "parser/flow_cmdline_parse_string.h"
+#include "parser/flow_cmdline_socket.h"
 
 #ifdef RTE_LIBRTE_CMDLINE_DEBUG
 #define debug_printf printf
@@ -102,7 +103,7 @@ match_node(cmd_node_t *node, const char *buf,
 {
 	int rc;
 	char *token;
-	int len = 0, str_len;
+	int len = 0, str_len, quote;
 	uint32_t uint_value;
 	char c;
 	if (!node || !buf || !cmd_blk)
@@ -139,6 +140,15 @@ parse_it:
 						cmd_blk->which[node->index-1] = node->value;
 						break;
 					case CMD_KW_TYPE_SET:
+					case CMD_KW_TYPE_DEBUG:
+                        if (!strcmp(token, "set") || !strcmp(token, "debug"))
+                            cmd_blk->mode = MODE_DO;
+                        break;
+                    case CMD_KW_TYPE_UNSET:
+                    case CMD_KW_TYPE_UNDEB:
+                        if (!strcmp(token, "unset") || !strcmp(token, "undebug"))
+                            cmd_blk->mode = MODE_UNDO;
+                        break;
 					default:
 						break;
 				}
@@ -146,8 +156,14 @@ parse_it:
 				break;
 			case CMD_NODE_TYPE_STR:
 				str_len = 0;
-				while(!tyflow_cmdline_isendoftoken(buf[str_len])) {
+                /* string type need to support "xxx yyy" */
+                quote = (buf[0]=='"')?1:0;
+				while((!quote && !tyflow_cmdline_isendoftoken(buf[str_len])) ||
+                      (quote && tyflow_cmdline_isendofcommand(buf[str_len]))) {
 					str_len++;
+                    /* if the string is not begin with '"', treat it as a common charactor */
+                    if (quote && buf[str_len] == '"')
+                        quote = 0;
 				}
                 if (!str_len && !partial)
                     return -1;
@@ -270,18 +286,18 @@ parse_it:
 }
 
 int
-tyflow_cmdline_parse(struct cmdline *cl, const char * buf)
+tyflow_cmdline_parse(struct cmdline *cl, const char * buf, int console)
 {
 	cmd_node_t *node;
-	const char *curbuf;
+	char *curbuf;
 	cmd_blk_t cmd_blk = {0};
 	cmd_fn_t f = NULL;
 	int comment = 0;
 	int linelen = 0;
 	int parse_it = 0;
-	int tok = 0;
+	int tok = 0, ret;
 
-	if (!cl || !buf)
+	if ((!cl && console) || !buf)
 		return CMDLINE_PARSE_BAD_ARGS;
 
 	/*
@@ -289,7 +305,7 @@ tyflow_cmdline_parse(struct cmdline *cl, const char * buf)
 	 * - look if line contains only spaces or comments
 	 * - count line length
 	 */
-	curbuf = buf;
+	curbuf = (char *)buf;
 	while (! isendofline(*curbuf)) {
 		if ( *curbuf == '\0' ) {
 			debug_printf("Incomplete buf (len=%d)\n", linelen);
@@ -321,7 +337,7 @@ tyflow_cmdline_parse(struct cmdline *cl, const char * buf)
 
 	/* parse it !! */
 	node = cnode(root).child;
-    curbuf = buf;
+    curbuf = (char *)buf;
 	while (node) {
 		debug_printf("Node %s\n", node->token);
 
@@ -355,7 +371,20 @@ tyflow_cmdline_parse(struct cmdline *cl, const char * buf)
         }
     } else if (f) {
 		cmd_blk.cl = cl;
-		f(&cmd_blk);
+		ret = f(&cmd_blk);
+        if (!console) {
+            /* curbuf now has a brand new semantic */
+            curbuf = strdup(buf);
+            if (curbuf) {
+                if (curbuf[strlen(curbuf)-1] == '\n')
+                    curbuf[strlen(curbuf)-1] = 0;
+                cmdbatch_debug_trace(CMDBATCH_DEBUG_BASIC, 
+                                     "%s: the command (%s) is issued %d/%s\n", 
+                                     __func__, curbuf, ret,
+                                     ret==0?"successfully":"failed");
+                free(curbuf);
+            }
+        }
 		return 0;
 	} else {
 		/* should never be there */
@@ -541,11 +570,13 @@ cmd_node_t *root_cmd = &cnode(root);
 cmd_node_t *last_top_cmd = NULL;
 cmd_node_t *last_set_cmd = NULL;
 cmd_node_t *last_get_cmd = NULL;
+cmd_node_t *last_clear_cmd = NULL;
 cmd_node_t *last_debug_cmd = NULL;
 
 KW_NODE(set, none, none, "set", "configure system parameters");
 KW_NODE_UNSET(unset, none, none, "unset", "unconfigure system parameters");
 KW_NODE(get, none, none, "show", "show system infomation");
+KW_NODE(clear, none, none, "clear", "clear system statistic/trace/message/log/etc");
 KW_NODE_DEBUG(debug, none, none, "debug", "debug system modules");
 KW_NODE_UNDEB(undebug, none, none, "undebug", "undebug system modules");
 
@@ -579,17 +610,15 @@ add_get_cmd(cmd_node_t *node)
 }
 
 void
-add_debug_cmd(cmd_node_t *node)
+add_clear_cmd(cmd_node_t *node)
 {
-	add_cmd(node, &last_debug_cmd, &cnode(debug));
+	add_cmd(node, &last_clear_cmd, &cnode(clear));
 }
 
 void
-cmd_init(void)
+add_debug_cmd(cmd_node_t *node)
 {
-	add_top_cmd(&cnode(exit));
-	add_top_cmd(&cnode(get));
-	add_top_cmd(&cnode(set));
+	add_cmd(node, &last_debug_cmd, &cnode(debug));
 }
 
 static void
@@ -598,9 +627,25 @@ cmd_dup_child(cmd_node_t *dst, cmd_node_t *src)
     dst->child = src->child;
 }
 
+extern void
+debug_init(void);
+extern void
+cmd_batch_init(void);
 void
-cmd_init2(void)
+cmd_init(void)
 {
+	add_top_cmd(&cnode(exit));
+	add_top_cmd(&cnode(get));
+	add_top_cmd(&cnode(clear));
+	add_top_cmd(&cnode(set));
     add_top_cmd(&cnode(unset));
     cmd_dup_child(&cnode(unset), &cnode(set));
+
+    debug_init();
+    add_top_cmd(&cnode(debug));
+    add_top_cmd(&cnode(undebug));
+    cmd_dup_child(&cnode(undebug), &cnode(debug));
+
+    cmd_batch_init();
 }
+

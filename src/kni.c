@@ -37,6 +37,8 @@
 #include "netif_addr.h"
 #include "kni.h"
 
+#include "debug_flow.h"
+
 #define Kni /* KNI is defined */
 #define RTE_LOGTYPE_Kni     RTE_LOGTYPE_USER1
 
@@ -155,16 +157,28 @@ static int kni_mc_list_cmp_set(struct netif_port *dev,
         case 1:
             err = __netif_mc_add(dev, &chg_lst.addrs[i]);
 
+#if 0
             RTE_LOG(INFO, Kni, "%s: add mc addr: %s %s %s\n", __func__,
                     eth_addr_dump(&chg_lst.addrs[i], mac, sizeof(mac)),
                     dev->name, dpvs_strerror(err));
+#endif
+            flow_debug_trace(FLOW_DEBUG_BASIC, "%s: add mc addr: %s %s %s\n", 
+                             __func__,
+                             eth_addr_dump(&chg_lst.addrs[i], mac, sizeof(mac)),
+                             dev->name, dpvs_strerror(err));
             break;
         case 2:
             err = __netif_mc_del(dev, &chg_lst.addrs[i]);
 
+#if 0
             RTE_LOG(INFO, Kni, "%s: del mc addr: %s %s %s\n", __func__,
                     eth_addr_dump(&chg_lst.addrs[i], mac, sizeof(mac)),
                     dev->name, dpvs_strerror(err));
+#endif
+            flow_debug_trace(FLOW_DEBUG_BASIC, "%s: del mc addr: %s %s %s\n",
+                             __func__,
+                             eth_addr_dump(&chg_lst.addrs[i], mac, sizeof(mac)),
+                             dev->name, dpvs_strerror(err));
             break;
         default:
             /* should not happen. */

@@ -7,7 +7,7 @@
 #ifndef _PARSE_STRING_H_
 #define _PARSE_STRING_H_
 
-#include "cmdline_parse.h"
+#include "parser/flow_cmdline_parse.h"
 
 #ifdef __cplusplus
 extern "C" {

@@ -4,8 +4,8 @@
  * All rights reserved.
  */
 
-#ifndef _RDLINE_H_
-#define _RDLINE_H_
+#ifndef _FLOW_CMDLINE_RDLINE_H_
+#define _FLOW_CMDLINE_RDLINE_H_
 
 /**
  * This file is a small equivalent to the GNU readline library, but it
@@ -31,8 +31,8 @@
  */
 
 #include <stdio.h>
-#include "cmdline_cirbuf.h"
-#include "cmdline_vt100.h"
+#include "parser/flow_cmdline_cirbuf.h"
+#include "parser/flow_cmdline_vt100.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -204,4 +204,4 @@ char *tyflow_rdline_get_history_item(struct rdline *rdl, unsigned int i);
 }
 #endif
 
-#endif /* _RDLINE_H_ */
+#endif /* _FLOW_CMDLINE_RDLINE_H_ */

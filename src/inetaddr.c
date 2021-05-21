@@ -28,8 +28,8 @@
 #include "inetaddr.h"
 #include "conf/inetaddr.h"
 
-#include "parser/cmdline_parse.h"
-#include "parser/cmdline.h"
+#include "parser/flow_cmdline_parse.h"
+#include "parser/flow_cmdline.h"
 
 #define IFA
 #define RTE_LOGTYPE_IFA         RTE_LOGTYPE_USER1
@@ -1808,6 +1808,7 @@ static int
 set_address_cli(cmd_blk_t *cbt)
 {
 	int i;
+	tyflow_cmdline_printf(cbt->cl, "mode: %s\n", (cbt->mode==MODE_DO)?"do":"undo");
 	tyflow_cmdline_printf(cbt->cl, "number cnt: %d\n", cbt->number_cnt);
 	for (i=0; i<cbt->number_cnt; i++) {
 		tyflow_cmdline_printf(cbt->cl, "\t%d: %d\n", i, cbt->number[i]);

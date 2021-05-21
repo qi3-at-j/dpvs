@@ -44,8 +44,9 @@
 #include <arpa/inet.h>
 #include <ipvs/redirect.h>
 
-#include "parser/cmdline_parse.h"
-#include "parser/cmdline.h"
+#include "parser/flow_cmdline_parse.h"
+#include "parser/flow_cmdline.h"
+#include "debug_flow.h"
 
 #define NETIF_PKTPOOL_NB_MBUF_DEF   65535
 #define NETIF_PKTPOOL_NB_MBUF_MIN   1023
@@ -1672,6 +1673,11 @@ static inline uint16_t netif_rx_burst(portid_t pid, struct netif_queue_conf *qco
          * processing lcore ? No! we just leave the work to tools */
     } else {
         nrx = rte_eth_rx_burst(pid, qconf->id, qconf->mbufs, NETIF_MAX_PKT_BURST);
+        if (nrx) {
+            flow_debug_trace(FLOW_DEBUG_BASIC, " receive %d packets\n", nrx);
+            flow_debug_packet(1, qconf->mbufs[0]);
+        }
+
 #ifdef CONFIG_DPVS_NETIF_DEBUG
 		if (nrx) {
 			RTE_LOG(WARNING, NETIF, "%s: received %d packets!\n", __func__, nrx);
@@ -5209,7 +5215,7 @@ set_interface_cli(cmd_blk_t *cbt)
 	for (i=0; i<cbt->string_cnt; i++) {
 		tyflow_cmdline_printf(cbt->cl, "\t%d: %s\n", i, cbt->string[i]);
 	}
-	return 0;
+	return 1;
 }
 
 EOL_NODE(interface_eol, set_interface_cli);
