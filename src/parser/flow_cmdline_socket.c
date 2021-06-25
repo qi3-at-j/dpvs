@@ -159,13 +159,13 @@ tyflow_cmd_batch_job_func(void *dummy)
                              "%s: cmd batch recv fail -- %d/%d recieved\n",
                              __func__, ret, sizeof(msg));
         goto cleanup;
-    } else if (msg.magic != CMD_BATCH_MAGIC) {
+    } else if (ntohl(msg.magic) != CMD_BATCH_MAGIC) {
 #if 0
         RTE_LOG(WARNING, CMDBATCH, "%s: cmd batch recv corrupted msg -- %d/%d \n",
                 __func__, ret, msg.magic);
 #endif
         cmdbatch_debug_trace(CMDBATCH_DEBUG_BASIC, 
-                             "%s: cmd batch recv corrupted msg -- %d/%d\n",
+                             "%s: cmd batch recv corrupted msg -- %d/%x\n",
                              __func__, ret, msg.magic);
         goto cleanup;
     } 

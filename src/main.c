@@ -27,11 +27,13 @@
 #include <pthread.h>
 #include <assert.h>
 #include <getopt.h>
+#include <signal.h>
 #include "pidfile.h"
 #include "dpdk.h"
 #include "conf/common.h"
 #include "netif.h"
 #include "vlan.h"
+#include "br_private.h"
 #include "inet.h"
 #include "timer.h"
 #include "ctrl.h"
@@ -47,6 +49,9 @@
 #include "eal_mem.h"
 #include "scheduler.h"
 #include "pdump.h"
+#include "general_rcu.h"
+#include "fw_conf/fw_cli.h"
+#include "fw_conf/fw_conf.h"
 
 #define DPVS    "dpvs"
 #define RTE_LOGTYPE_DPVS RTE_LOGTYPE_USER1
@@ -57,7 +62,7 @@
 extern bool g_dpvs_pdump;
 #endif
 extern int log_slave_init(void);
-
+struct dpvs_timer   graph_print_timer;
 
 
 /*
@@ -72,6 +77,10 @@ ifstate_term(void);
                     dpvs_scheduler_init, dpvs_scheduler_term),  \
         DPVS_MODULE(MODULE_GLOBAL_DATA, "global data",          \
                     global_data_init,    global_data_term),     \
+        DPVS_MODULE(MODULE_FWCLI,       "fw cli init",          \
+                    fw_cli_init,         fw_cli_term),          \
+        DPVS_MODULE(MODULE_FWCONF,      "fw conf init",         \
+                    fw_conf_init,        fw_conf_term),         \
         DPVS_MODULE(MODULE_CFG,         "config file",          \
                     cfgfile_init,        cfgfile_term),         \
         DPVS_MODULE(MODULE_PDUMP,        "pdump",               \
@@ -100,6 +109,8 @@ ifstate_term(void);
                     dp_vs_init,          dp_vs_term),           \
         DPVS_MODULE(MODULE_NETIF_CTRL,  "netif ctrl",           \
                     netif_ctrl_init,     netif_ctrl_term),      \
+        DPVS_MODULE(MODULE_GENER_RCU,   "gener_rcu",            \
+                    RCU_init,           NULL),                  \
         DPVS_MODULE(MODULE_IFTRAF,      "iftraf",               \
                     iftraf_init,         iftraf_term),          \
         DPVS_MODULE(MODULE_IFSTAT,      "ifstate",               \
@@ -108,6 +119,10 @@ ifstate_term(void);
                     eal_mem_init,        eal_mem_term)          \
     }
 
+/*    
+后期需要加上这个特性
+DPVS_MODULE(MODULE_BRIDGE,        "brctl",              \
+            br_init,              NULL),                \*/
 #define DPVS_MODULE(a, b, c, d)  a
 enum dpvs_modules DPVS_MODULES;
 #undef DPVS_MODULE
@@ -247,6 +262,69 @@ static int parse_app_args(int argc, char **argv)
 
     return ret;
 }
+static void
+signal_handler(int signum)
+{
+	if (signum == SIGINT || signum == SIGTERM) {
+		printf("\n\nSignal %d received, preparing to exit...\n",
+		       signum);
+		force_quit = true;
+	}
+
+	//rte_delay_ms(1E3);
+	dpvs_final_exit();
+}
+
+static struct rte_graph_cluster_stats *graph_stats = NULL;
+
+int
+print_stats(void *arg)
+{
+	const char topLeft[] = {27, '[', '1', ';', '1', 'H', '\0'};
+	const char clr[] = {27, '[', '2', 'J', '\0'};
+
+	/* Clear screen and move to top left */
+	printf("%s%s", clr, topLeft);
+	rte_graph_cluster_stats_get(graph_stats, 0);
+	rte_delay_ms(1E3);
+	printf("finish print status\n");
+	return 0;
+}
+
+
+void init_graph_print(void){
+	struct timeval tv;
+	struct rte_graph_cluster_stats_param s_param;
+	const char *pattern = "worker_*";
+
+	/* Prepare graph_stats object */
+	memset(&s_param, 0, sizeof(s_param));
+	s_param.f = stdout;
+	s_param.socket_id = SOCKET_ID_ANY;
+	s_param.graph_patterns = &pattern;
+	s_param.nb_graph_patterns = 1;
+
+	graph_stats = rte_graph_cluster_stats_create(&s_param);
+	if (graph_stats == NULL)
+		rte_exit(EXIT_FAILURE, "Unable to create graph_stats object\n");
+	//æ‰“å°å›¾çŠ¶æ€ç»“æž„
+	printf("final ---------------------------");
+	rte_graph_stat_printf(graph_stats);
+	tv.tv_sec = 1; /* one second */
+    tv.tv_usec = 0;
+
+	//rte_graph_cluster_stats_destroy(graph_stats);//æ³¨æ„è¿›ç¨‹ç»ˆç»“çš„æ—¶å€™è¦é‡Šæ”¾å†…å­˜ã€‚
+	dpvs_timer_sched_period(&graph_print_timer, &tv, print_stats, NULL, true);
+}
+void dpvs_final_exit(void){
+
+    dpvs_state_set(DPVS_STATE_FINISH);
+    modules_term();
+
+    pidfile_rm(DPVS_PIDFILE);
+
+    exit(0);
+}
 
 void
 cmd_init(void);
@@ -273,6 +351,12 @@ int main(int argc, char *argv[])
     }
     argc -= err, argv += err;
 
+	//æ‰‹åŠ¨åœæ­¢
+	force_quit = false;
+	//signal(SIGINT, signal_handler);
+	//signal(SIGTERM, signal_handler);
+
+	
     /* check if dpvs is running and remove zombie pidfile */
     if (dpvs_running(DPVS_PIDFILE)) {
         fprintf(stderr, "dpvs is already running\n");
@@ -301,6 +385,12 @@ int main(int argc, char *argv[])
 
     RTE_LOG(INFO, DPVS, "dpvs version: %s, build on %s\n", DPVS_VERSION, DPVS_BUILD_DATE);
 
+	//此处适配dpdk20 放弃的dpdk18 mbuf中的userdata字段。
+	err = dpdk_priv_userdata_register();
+	if(err != EDPVS_OK){
+		 RTE_LOG(ERR, DPVS, "register mbuf dyn failed = %d\n", err);
+            goto end;
+	}
     rte_timer_subsystem_init();
 
     modules_init();
@@ -315,15 +405,41 @@ int main(int argc, char *argv[])
         }
 
         err = netif_port_start(dev);
+		printf("netif_port_start .........done ,err = %d\n", err);
         if (err != EDPVS_OK)
             RTE_LOG(WARNING, DPVS, "Start %s failed, skipping ...\n",
                     dev->name);
-    }
+		else{
+			//³õÊ¼»¯nodeÊÕ·¢½ÚµãËùÐèÒªµÄdevÅäÖÃÊý¾Ý
+			init_rte_node_ethdev_config(pid);
+		}
+	}
 
+	/*³õÊ¼»¯ÐèÒª´´½¨µÄÍ¼½ÚµãÊýÁ¿£¬ÒÀ¾ÝÊÇÒÀ´ÎÅÐ¶ÏËùÓÐ×ª·¢ºËµÄ½ÓÊÕ¶ÓÁÐÊýÁ¿£¬
+	Èç¹û´æÔÚ½ÓÊÕ¶ÓÁÐµÄÅäÖÃ£¬ÔòÎÒÃÇ±ØÐë´´½¨Í¼½Úµã*/
+	netif_init_graph_need_to_create();
+
+	/*·¢ËÍ½ÓÊÕ½Úµã³õÊ¼»¯*/
+	err = rte_node_eth_config(get_node_ethdev_config(), get_node_ethdev_config_nb(), netif_get_graph_need_to_create());
+	if (err < 0){
+		RTE_LOG(ERR, DPVS, "Init rx tx node failed£¡ err = %d\n", err);
+		goto end;
+	}
+	
     /* print port-queue-lcore relation */
     netif_print_lcore_conf(pql_conf_buf, &pql_conf_buf_len, true, 0);
     RTE_LOG(INFO, DPVS, "\nport-queue-lcore relation array: \n%s\n",
             pql_conf_buf);
+
+	err = init_graph_for_per_slave_core();
+	if (err < 0){
+			RTE_LOG(ERR, DPVS, "Init graph_for_per_slave_core failed£¡ err = %d\n", err);
+			goto end;
+	}
+
+	/* æ˜¾ç¤ºå›¾è°ƒåº¦æƒ…å†µAccumulate and print stats on main until exit */
+	//if (rte_graph_has_stats_feature())
+	//init_graph_print();
 
     log_slave_init();
 
@@ -336,15 +452,18 @@ int main(int argc, char *argv[])
 
     dpvs_state_set(DPVS_STATE_NORMAL);
 
+	err = RCU_start();
+	if (err < 0){
+		RTE_LOG(ERR, DPVS, "RCU start failed. err = %d\n", err);
+		goto end;
+	}
+	
     cmd_init();
     ctflow_console_job_start();
     /* start control plane thread loop */
     dpvs_lcore_start(1);
 end:
-    dpvs_state_set(DPVS_STATE_FINISH);
-    modules_term();
 
-    pidfile_rm(DPVS_PIDFILE);
+	dpvs_final_exit();
 
-    exit(0);
 }

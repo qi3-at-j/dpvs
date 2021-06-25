@@ -42,3 +42,4 @@ install:
 	install -m 744 keepalived/bin/keepalived $(INSDIR)/keepalived
 	install -m 744 ipvsadm/ipvsadm $(INSDIR)/ipvsadm
 	install -m 744 dpip/build/dpip $(INSDIR)/dpip
+	install -m 744 ud_sock/build/test_tyflow_ud_sock $(INSDIR)/test_tyflow_ud_sock

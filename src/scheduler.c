@@ -239,8 +239,10 @@ static int dpvs_job_loop(void *arg)
     return EDPVS_OK;
 }
 
+#if CONSOLE_USING_THREAD
 /* master handling thread */
 static pthread_t ctflow_console_thread;
+#endif
 extern void *
 console_entry(void *args);
 int
@@ -248,6 +250,7 @@ ctflow_console_job_start(void)
 {
 	int ret;
 
+#if CONSOLE_USING_THREAD
 	ret = pthread_create(&ctflow_console_thread, NULL, console_entry, NULL);
 	if (ret) {
 		RTE_LOG(ERR, DSCHED, "faile to create console\n");
@@ -257,6 +260,18 @@ ctflow_console_job_start(void)
 	ret = rte_thread_setname(ctflow_console_thread, "ctflow-console");
 	if (ret < 0)
 		RTE_LOG(DEBUG, DSCHED, "Failed to set name for ctflow-console thread\n");
+#else
+
+    ret = fork();
+    if (ret < 0) {
+		RTE_LOG(ERR, DSCHED, "faile to create console\n");
+        return -1;
+    }
+    if (ret > 0)
+        return 0;
+    else 
+        console_entry(NULL);
+#endif
 
 	return 0;
 }

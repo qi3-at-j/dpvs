@@ -117,14 +117,14 @@ struct ip4_stats;
 int ipv4_get_stats(struct ip4_stats *stats);
 int ip4_defrag(struct rte_mbuf *mbuf, int user);
 
-uint32_t ip4_select_id(struct ipv4_hdr *iph);
+uint32_t ip4_select_id(struct rte_ipv4_hdr *iph);
 int ipv4_local_out(struct rte_mbuf *mbuf);
 
 /* helper functions */
-static inline struct ipv4_hdr *ip4_hdr(const struct rte_mbuf *mbuf)
+static inline struct rte_ipv4_hdr *ip4_hdr(const struct rte_mbuf *mbuf)
 {
     /* can only invoked at L3 */
-    return rte_pktmbuf_mtod(mbuf, struct ipv4_hdr *);
+    return rte_pktmbuf_mtod(mbuf, struct rte_ipv4_hdr *);
 }
 
 static inline int ip4_hdrlen(const struct rte_mbuf *mbuf)
@@ -132,16 +132,16 @@ static inline int ip4_hdrlen(const struct rte_mbuf *mbuf)
     return (ip4_hdr(mbuf)->version_ihl & 0xf) << 2;
 }
 
-static inline void ip4_send_csum(struct ipv4_hdr *iph)
+static inline void ip4_send_csum(struct rte_ipv4_hdr *iph)
 {
     iph->hdr_checksum = 0;
     iph->hdr_checksum = rte_ipv4_cksum(iph);
 }
 
-static inline bool ip4_is_frag(struct ipv4_hdr *iph)
+static inline bool ip4_is_frag(struct rte_ipv4_hdr *iph)
 {
     return (iph->fragment_offset
-            & htons(IPV4_HDR_MF_FLAG | IPV4_HDR_OFFSET_MASK)) != 0;
+            & htons(RTE_IPV4_HDR_MF_FLAG | RTE_IPV4_HDR_OFFSET_MASK)) != 0;
 }
 
 /*
@@ -157,13 +157,13 @@ static inline bool ip4_is_frag(struct ipv4_hdr *iph)
  * @return
  *   The non-complemented pseudo checksum to set in the L4 header.
  */
-static inline uint16_t ip4_phdr_cksum(struct ipv4_hdr *iph, uint64_t ol_flags)
+static inline uint16_t ip4_phdr_cksum(struct rte_ipv4_hdr *iph, uint64_t ol_flags)
 {
     uint16_t csum;
     uint16_t total_length = iph->total_length;
 
     iph->total_length = htons(ntohs(total_length) -
-            ((iph->version_ihl & 0xf) << 2) + sizeof(struct ipv4_hdr));
+            ((iph->version_ihl & 0xf) << 2) + sizeof(struct rte_ipv4_hdr));
     csum = rte_ipv4_phdr_cksum(iph, ol_flags);
 
     iph->total_length = total_length;
@@ -183,13 +183,13 @@ static inline uint16_t ip4_phdr_cksum(struct ipv4_hdr *iph, uint64_t ol_flags)
  * @return
  *   The complemented checksum to set in the L4 header.
  */
-static inline uint16_t ip4_udptcp_cksum(struct ipv4_hdr *iph, const void *l4_hdr)
+static inline uint16_t ip4_udptcp_cksum(struct rte_ipv4_hdr *iph, const void *l4_hdr)
 {
     uint16_t csum;
     uint16_t total_length = iph->total_length;
 
     iph->total_length = htons(ntohs(total_length) -
-            ((iph->version_ihl & 0xf) << 2) + sizeof(struct ipv4_hdr));
+            ((iph->version_ihl & 0xf) << 2) + sizeof(struct rte_ipv4_hdr));
     csum = rte_ipv4_udptcp_cksum(iph, l4_hdr);
 
     iph->total_length = total_length;

@@ -33,7 +33,7 @@ static void usage(void)
         "Usage:\n"
         "    "DPIP_NAME" [OPTIONS] OBJECT { COMMAND | help }\n"
         "Parameters:\n"
-        "    OBJECT  := { link | addr | route | neigh | vlan | tunnel |\n"
+        "    OBJECT  := { link | addr | route | neigh | vlan | brctl | tunnel |\n"
         "                 qsch | cls | ipv6 | iftraf | eal-mem }\n"
         "    COMMAND := { add | del | change | replace | show | flush | enable | disable }\n"
         "Options:\n"

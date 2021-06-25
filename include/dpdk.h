@@ -17,46 +17,8 @@
  */
 #ifndef __DPVS_DPDK_H__
 #define __DPVS_DPDK_H__
-#include <rte_common.h>
-#include <rte_version.h>
-#include <rte_vect.h>
-#include <rte_byteorder.h>
-#include <rte_log.h>
-#include <rte_memory.h>
-#include <rte_memcpy.h>
-#include <rte_memzone.h>
-#include <rte_eal.h>
-#include <rte_per_lcore.h>
-#include <rte_launch.h>
-#include <rte_atomic.h>
-#include <rte_cycles.h>
-#include <rte_prefetch.h>
-#include <rte_lcore.h>
-#include <rte_per_lcore.h>
-#include <rte_branch_prediction.h>
-#include <rte_interrupts.h>
-#include <rte_pci.h>
-#include <rte_bus_pci.h>
-#include <rte_random.h>
-#include <rte_debug.h>
-#include <rte_ether.h>
-#include <rte_ethdev.h>
-#include <rte_ring.h>
-#include <rte_mempool.h>
-#include <rte_mbuf.h>
-#include <rte_ip.h>
-#include <rte_tcp.h>
-#include <rte_udp.h>
-#include <rte_icmp.h>
-#include <rte_string_fns.h>
-#include <rte_malloc.h>
-#include <rte_rwlock.h>
-#include <rte_timer.h>
-#include <rte_jhash.h>
-#include <rte_kni.h>
-#include <rte_ip_frag.h>
-#include <rte_eth_bond.h>
-#include <rte_eth_bond_8023ad.h>
+
+#include "dpdk_version_adapter.h"
 #include "mbuf.h"
 #ifdef CONFIG_DPVS_PDUMP
 #include <rte_pdump.h>
@@ -68,6 +30,23 @@ extern int dpvs_log(uint32_t level, uint32_t logtype, const char *func, int line
 #define RTE_LOG(l, t, ...)                  \
     dpvs_log(RTE_LOG_ ## l,                   \
         RTE_LOGTYPE_ ## t,  __func__, __LINE__, # t ": " __VA_ARGS__)
+#endif
+
+typedef uint8_t		u8;
+typedef uint16_t	u16;
+typedef uint32_t	u32;
+typedef uint64_t	u64;
+
+#ifndef __u8
+typedef uint8_t     __u8;
+#endif
+
+#ifndef __u16
+typedef uint16_t    __u16;
+#endif
+
+#ifndef __u32
+typedef uint32_t    __u32;
 #endif
 
 

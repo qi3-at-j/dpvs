@@ -42,7 +42,7 @@
 
 /* too big ? adjust according to free mem ?*/
 #define DPVS_CONN_POOL_SIZE_DEF     2097151
-#define DPVS_CONN_POOL_SIZE_MIN     65536
+#define DPVS_CONN_POOL_SIZE_MIN     4096//65536
 #define DPVS_CONN_CACHE_SIZE_DEF    256
 
 static int conn_pool_size  = DPVS_CONN_POOL_SIZE_DEF;
@@ -555,7 +555,7 @@ static int dp_vs_conn_resend_packets(struct dp_vs_conn *conn,
                             "%s: no memory for syn_proxy rs's syn retransmit\n",
                             __func__);
                 } else {
-                    cloned_syn_mbuf->userdata = NULL;
+					mbuf_userdata_set(cloned_syn_mbuf, NULL);
                     conn->packet_xmit(pp, conn, cloned_syn_mbuf);
                 }
             }

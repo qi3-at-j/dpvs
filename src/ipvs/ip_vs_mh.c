@@ -370,7 +370,7 @@ static int dp_vs_mh_shift_weight(struct dp_vs_service *svc, int gcd)
     mw = weight / gcd;
 
     /* shift = occupied bits of weight/gcd - MH highest bits */
-    shift = fls(mw) - DP_VS_MH_TAB_BITS;
+    shift = ffls(mw) - DP_VS_MH_TAB_BITS;
     return (shift >= 0) ? shift : 0;
 }
 

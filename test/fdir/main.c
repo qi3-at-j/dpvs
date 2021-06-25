@@ -82,9 +82,9 @@ static const struct rte_eth_conf port_conf = {
 };
 
 static inline int 
-is_ipv4_pkt_valid(struct ipv4_hdr *iph, uint32_t link_len)
+is_ipv4_pkt_valid(struct rte_ipv4_hdr *iph, uint32_t link_len)
 {
-        if (link_len < sizeof(struct ipv4_hdr))
+        if (link_len < sizeof(struct rte_ipv4_hdr))
                 return 0;
 
     /* TODO: csum */
@@ -95,15 +95,15 @@ is_ipv4_pkt_valid(struct ipv4_hdr *iph, uint32_t link_len)
         if ((iph->version_ihl & 0xf) < 5)
                 return 0;
 
-        if (rte_cpu_to_be_16(iph->total_length) < sizeof(struct ipv4_hdr))
+        if (rte_cpu_to_be_16(iph->total_length) < sizeof(struct rte_ipv4_hdr))
                 return 0;
 
         return 1;
 }
 
-static void dump_ipv4_hdr(const struct ipv4_hdr *iph,
+static void dump_ipv4_hdr(const struct rte_ipv4_hdr *iph,
                           uint16_t port, uint16_t queue,
-                          const struct udp_hdr *uh) 
+                          const struct rte_udp_hdr *uh) 
 {
     char saddr[16], daddr[16];
     uint16_t lcore;
@@ -119,7 +119,7 @@ static void dump_ipv4_hdr(const struct ipv4_hdr *iph,
 
     fprintf(stderr, "[%u] port %u queue %d ipv4 hl %u tos %u tot %u "
             "id %u ttl %u prot %u src %s dst %s sport %04x %u dport %04x %u\n",
-            lcore, port, queue, IPV4_HDR_IHL_MASK & iph->version_ihl, 
+            lcore, port, queue, RTE_IPV4_HDR_IHL_MASK & iph->version_ihl, 
             iph->type_of_service, ntohs(iph->total_length), 
             ntohs(iph->packet_id), iph->time_to_live, 
             iph->next_proto_id, saddr, daddr, 
@@ -131,17 +131,17 @@ static void dump_ipv4_hdr(const struct ipv4_hdr *iph,
 
 static int ip_rcv(struct rte_mbuf *mbuf, uint16_t port, uint16_t queue)
 {
-    struct ipv4_hdr *iph;
+    struct rte_ipv4_hdr *iph;
     assert(mbuf);
     port = port;
-    struct udp_hdr *uh;
+    struct rte_udp_hdr *uh;
 
-    iph = rte_pktmbuf_mtod_offset(mbuf, struct ipv4_hdr *, sizeof(struct ether_hdr));
+    iph = rte_pktmbuf_mtod_offset(mbuf, struct rte_ipv4_hdr *, sizeof(struct rte_ether_hdr));
     if (!is_ipv4_pkt_valid(iph, mbuf->pkt_len))
         return -1; 
 
-    uh = rte_pktmbuf_mtod_offset(mbuf, struct udp_hdr *, 
-         sizeof(struct ether_hdr) + (IPV4_HDR_IHL_MASK & iph->version_ihl) * sizeof(uint32_t));
+    uh = rte_pktmbuf_mtod_offset(mbuf, struct rte_udp_hdr *, 
+         sizeof(struct rte_ether_hdr) + (RTE_IPV4_HDR_IHL_MASK & iph->version_ihl) * sizeof(uint32_t));
 
     /* just for test */
     dump_ipv4_hdr(iph, mbuf->port, queue, uh);

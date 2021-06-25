@@ -17,6 +17,7 @@
  */
 #ifndef __DPVS_TIMER_H__
 #define __DPVS_TIMER_H__
+#include <unistd.h>
 #include <sys/time.h>
 #include "list.h"
 
@@ -29,6 +30,24 @@ enum {
     DTIMER_OK = 0,
     DTIMER_STOP,
 };
+
+#define DPVS_TIMER_HZ           1000
+
+#define time_after(a, b)	((long)((b) - (a)) < 0)
+#define time_before(a, b)	time_after(b, a)
+
+#define time_after_eq(a, b)     ((long)((a) - (b)) >= 0)
+#define time_before_eq(a, b)	time_after_eq(b, a)
+
+static inline uint32_t raid6_jiffies(void)
+{
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	return tv.tv_sec*1000 + tv.tv_usec/1000;
+}
+
+
+#define jiffies	raid6_jiffies()
 
 typedef int (*dpvs_timer_cb_t)(void *arg);
 
@@ -111,5 +130,9 @@ void dpvs_time_rand_delay(struct timeval *tv, long delay_us);
 int dpvs_timer_sched_interval_get(void);
 void timer_keyword_value_init(void);
 void install_timer_keywords(void);
+
+uint32_t round_jiffies_up(unsigned long j);
+int mod_timer(struct dpvs_timer *timer,  unsigned long expires, bool global);
+
 
 #endif /* __DPVS_TIMER_H__ */

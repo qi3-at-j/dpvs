@@ -87,6 +87,7 @@ static uint64_t             sa_lcore_mask;
 
 static uint8_t              sa_pool_hash_size   = SAPOOL_DEF_HASH_SZ;
 
+#if 0
 static int __add_del_filter(int af, struct netif_port *dev, lcoreid_t cid,
                             const union inet_addr *dip, __be16 dport,
                             uint32_t filter_id[MAX_FDIR_PROTO], bool add)
@@ -190,7 +191,7 @@ static inline int sa_del_filter(int af, struct netif_port *dev, lcoreid_t cid,
 {
     return  __add_del_filter(af, dev, cid, dip, dport, filter_id, false);
 }
-
+#endif
 static int sa_pool_alloc_hash(struct sa_pool *ap, uint8_t hash_sz,
                                const struct sa_fdir *fdir)
 {
@@ -258,7 +259,7 @@ static int sa_pool_free_hash(struct sa_pool *ap)
     ap->pool_hash_sz = 0;
     return EDPVS_OK;
 }
-
+#if 0
 static int sa_pool_add_filter(struct inet_ifaddr *ifa, struct sa_pool *ap,
                              lcoreid_t cid)
 {
@@ -295,7 +296,8 @@ static int sa_pool_del_filter(struct inet_ifaddr *ifa, struct sa_pool *ap,
 
     return err;
 }
-
+#endif
+#if 0
 int sa_pool_create(struct inet_ifaddr *ifa, uint16_t low, uint16_t high)
 {
     int err;
@@ -410,7 +412,7 @@ int sa_pool_destroy(struct inet_ifaddr *ifa)
 
     return EDPVS_OK;
 }
-
+#endif
 /* hash dest's <ip/port>. if no dest provided, just use first pool. */
 static inline struct sa_entry_pool *
 sa_pool_hash(const struct sa_pool *ap, const struct sockaddr_storage *ss)
@@ -787,7 +789,7 @@ int sa_release(const struct netif_port *dev,
         return err;
     }
 
-    sa_pool_destroy(ifa);
+    //sa_pool_destroy(ifa);
 
     inet_addr_ifa_put(ifa);
 

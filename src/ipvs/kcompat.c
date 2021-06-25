@@ -24,7 +24,7 @@ inline unsigned long __ffs(unsigned long word)
 }
 
 // taken from definition in include/asm-generic/bitops/builtin-fls.h
-inline int fls(unsigned int x)
+inline int ffls(unsigned int x)
 {
     return x ? sizeof(x) * 8 - __builtin_clz(x) : 0;
 }

@@ -229,6 +229,8 @@ typedef struct cmd_blk_ {
     uint32_t mode;
 	uint32_t number_cnt;
 	uint32_t number[MAX_CMD_NUM];
+	uint32_t ipv4_cnt;
+	uint32_t ipv4[MAX_CMD_NUM];
 	uint32_t which_cnt;
 	uint32_t which[MAX_CMD_NUM];
 	uint32_t string_cnt;
@@ -244,9 +246,13 @@ typedef struct cmd_blk_ {
     #define CMD_KW_TYPE_UNSET  3
     #define CMD_KW_TYPE_DEBUG  4
     #define CMD_KW_TYPE_UNDEB  5
-#define CMD_NODE_TYPE_STR 3
-#define CMD_NODE_TYPE_NUM 4
-#define CMD_NODE_TYPE_EOL 5
+    #define CMD_KW_TYPE_CREATE 6
+    #define CMD_KW_TYPE_DELETE 7
+    #define CMD_KW_TYPE_MOVE   8
+#define CMD_NODE_TYPE_STR  3
+#define CMD_NODE_TYPE_NUM  4
+#define CMD_NODE_TYPE_IPV4 5
+#define CMD_NODE_TYPE_EOL  6
 
 typedef int (* cmd_fn_t)(cmd_blk_t *);
 
@@ -342,6 +348,42 @@ exnode(exit);
 		help                   \
 	};
 
+#define KW_NODE_CREATE(node, child, sibl, kw, help) \
+	cmd_node_t cnode(node) = { \
+		&cnode(child),         \
+		&cnode(sibl),          \
+		CMD_NODE_TYPE_KW,      \
+		CMD_KW_TYPE_CREATE,    \
+		0,                     \
+		0,                     \
+		kw,                    \
+		help                   \
+	};
+
+#define KW_NODE_DELETE(node, child, sibl, kw, help) \
+	cmd_node_t cnode(node) = { \
+		&cnode(child),         \
+		&cnode(sibl),          \
+		CMD_NODE_TYPE_KW,      \
+		CMD_KW_TYPE_DELETE,    \
+		0,                     \
+		0,                     \
+		kw,                    \
+		help                   \
+	};
+
+#define KW_NODE_MOVE(node, child, sibl, kw, help) \
+	cmd_node_t cnode(node) = { \
+		&cnode(child),         \
+		&cnode(sibl),          \
+		CMD_NODE_TYPE_KW,      \
+		CMD_KW_TYPE_MOVE,      \
+		0,                     \
+		0,                     \
+		kw,                    \
+		help                   \
+	};
+
 #define VALUE_NODE(node, child, sibl, help, index, type) \
 	cmd_node_t cnode(node) = { \
 		&cnode(child),         \
@@ -362,6 +404,8 @@ cmd_get_value_node_token(cmd_node_t *node)
             return "<string>";
         case CMD_NODE_TYPE_NUM:
             return "<number>";
+        case CMD_NODE_TYPE_IPV4:
+            return "<ipv4>";
         case CMD_NODE_TYPE_EOL:
             return "<return>";
         default:
@@ -383,6 +427,12 @@ add_clear_cmd(cmd_node_t *node);
 
 extern void
 add_debug_cmd(cmd_node_t *node);
+
+extern void
+add_create_cmd(cmd_node_t *node);
+
+extern void
+add_move_cmd(cmd_node_t *node);
 
 extern void
 cmd_init(void);

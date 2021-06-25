@@ -77,9 +77,9 @@ static int pfifo_fast_enqueue(struct Qsch *sch, struct rte_mbuf *mbuf)
         return qsch_drop(sch, mbuf);
     }
 
-    if (unlikely(mbuf->udata64 > 0 && mbuf->udata64 <= TC_PRIO_MAX &&
+    if (unlikely(mbuf_udata64_get(mbuf) > 0 && mbuf_udata64_get(mbuf) <= TC_PRIO_MAX &&
                  mbuf->packet_type == ETH_P_IP))
-        prio = (uint8_t)mbuf->udata64;
+        prio = (uint8_t)mbuf_udata64_get(mbuf);
 
     band = prio2band[prio];
     priv = qsch_priv(sch);

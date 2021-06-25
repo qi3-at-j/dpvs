@@ -198,8 +198,8 @@ static inline bool __service_in_range(int af,
 static struct dp_vs_service *
 __dp_vs_service_match_get4(const struct rte_mbuf *mbuf, bool *outwall, lcoreid_t cid)
 {
-    struct route_entry *rt = mbuf->userdata;
-    struct ipv4_hdr *iph = ip4_hdr(mbuf); /* ipv4 only */
+    struct route_entry *rt = mbuf_userdata_get(mbuf);
+    struct rte_ipv4_hdr *iph = ip4_hdr(mbuf); /* ipv4 only */
     struct dp_vs_service *svc;
     union inet_addr saddr, daddr;
     __be16 _ports[2], *ports;
@@ -266,7 +266,7 @@ __dp_vs_service_match_get4(const struct rte_mbuf *mbuf, bool *outwall, lcoreid_t
 static struct dp_vs_service *
 __dp_vs_service_match_get6(const struct rte_mbuf *mbuf, lcoreid_t cid)
 {
-    struct route6 *rt = mbuf->userdata;
+    struct route6 *rt = mbuf_userdata_get(mbuf);
     struct ip6_hdr *iph = ip6_hdr(mbuf);
     uint8_t ip6nxt = iph->ip6_nxt;
     struct dp_vs_service *svc;

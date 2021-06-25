@@ -78,7 +78,7 @@ static int alloc_vlan_info(struct netif_port *dev)
 static int vlan_xmit(struct rte_mbuf *mbuf, struct netif_port *dev)
 {
     struct vlan_dev_priv *vlan = netif_priv(dev);
-    struct ether_hdr *ethhdr = rte_pktmbuf_mtod(mbuf, struct ether_hdr *);
+    struct rte_ether_hdr *ethhdr = rte_pktmbuf_mtod(mbuf, struct rte_ether_hdr *);
     unsigned int len;
     int err;
 
@@ -189,7 +189,7 @@ static struct netif_ops vlan_netif_ops = {
     .op_xmit             = vlan_xmit,
     .op_set_mc_list      = vlan_set_mc_list,
     .op_filter_supported = vlan_filter_supported,
-    .op_set_fdir_filt    = vlan_set_fdir_filt,
+    //.op_set_fdir_filt    = vlan_set_fdir_filt,
     .op_get_queue        = vlan_get_queue,
     .op_get_link         = vlan_get_link,
     .op_get_promisc      = vlan_get_promisc,
@@ -200,7 +200,7 @@ static void vlan_setup(struct netif_port *dev)
 {
     dev->netif_ops = &vlan_netif_ops;
     dev->mtu = VLAN_ETH_DATA_LEN;
-    dev->hw_header_len = sizeof(struct ether_hdr) + VLAN_HLEN;
+    dev->hw_header_len = sizeof(struct rte_ether_hdr) + VLAN_HLEN;
 }
 
 /* @ifname is optional or vlan dev name will be auto generated. */
@@ -252,13 +252,14 @@ int vlan_add_dev(struct netif_port *real_dev, const char *ifname,
     }
 
     /* inherit features (offloading) and MAC address from real device */
-    dev->flag |= real_dev->flag;
+    dev->flags |= real_dev->flags;
+	dev->offload |= real_dev->offload;
     /* XXX: dpdk NIC not support csum offload for VLAN. */
-    dev->flag &= ~NETIF_PORT_FLAG_TX_IP_CSUM_OFFLOAD;
-    dev->flag &= ~NETIF_PORT_FLAG_TX_TCP_CSUM_OFFLOAD;
-    dev->flag &= ~NETIF_PORT_FLAG_TX_UDP_CSUM_OFFLOAD;
+    dev->offload &= ~NETIF_PORT_TX_IP_CSUM_OFFLOAD;
+    dev->offload &= ~NETIF_PORT_TX_TCP_CSUM_OFFLOAD;
+    dev->offload &= ~NETIF_PORT_TX_UDP_CSUM_OFFLOAD;
     dev->type = PORT_TYPE_VLAN;
-    ether_addr_copy(&real_dev->addr, &dev->addr);
+    rte_ether_addr_copy(&real_dev->addr, &dev->addr);
 
     vlan = netif_priv(dev);
     memset(vlan, 0, sizeof(*vlan));
@@ -375,7 +376,7 @@ struct netif_port *vlan_find_dev(const struct netif_port *real_dev,
  * restore it if mbuf should be deliver to KNI device.
  * if vlan tag stripped the m.data_off remembered will be wrong.
  */
-static inline int vlan_untag_mbuf(struct rte_mbuf *mbuf)
+inline int vlan_untag_mbuf(struct rte_mbuf *mbuf)
 {
     struct vlan_ethhdr *vehdr = NULL;
 
@@ -383,8 +384,8 @@ static inline int vlan_untag_mbuf(struct rte_mbuf *mbuf)
     if (mbuf->ol_flags & PKT_RX_VLAN_STRIPPED)
         return EDPVS_OK;
 
-    if (unlikely(mbuf_may_pull(mbuf, sizeof(struct ether_hdr) + \
-                                     sizeof(struct vlan_hdr)) != 0))
+    if (unlikely(mbuf_may_pull(mbuf, sizeof(struct rte_ether_hdr) + \
+                                     sizeof(struct rte_vlan_hdr)) != 0))
         return EDPVS_INVPKT;
 
     /* the data_off of mbuf is still at ethernet header. */
@@ -409,7 +410,7 @@ int vlan_rcv(struct rte_mbuf *mbuf, struct netif_port *real_dev)
 {
     struct netif_port *dev;
     struct vlan_dev_priv *vlan;
-    struct ether_hdr *ehdr = rte_pktmbuf_mtod(mbuf, struct ether_hdr *);
+    struct rte_ether_hdr *ehdr = rte_pktmbuf_mtod(mbuf, struct rte_ether_hdr *);
     int err;
 
     err = vlan_untag_mbuf(mbuf);

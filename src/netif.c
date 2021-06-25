@@ -16,6 +16,8 @@
  *
  */
 #include <unistd.h>
+#include <stdio.h>
+#include <string.h>
 #include <fcntl.h>
 #include <assert.h>
 #include <netinet/in.h>
@@ -52,6 +54,8 @@
 #define NETIF_PKTPOOL_NB_MBUF_MIN   1023
 #define NETIF_PKTPOOL_NB_MBUF_MAX   134217727
 static int netif_pktpool_nb_mbuf = NETIF_PKTPOOL_NB_MBUF_DEF;
+static int numa_on = 1;	  /**< NUMA is enabled by default. */
+static int per_port_pool = 0;   //disable by fault
 
 #define NETIF_PKTPOOL_MBUF_CACHE_DEF    256
 #define NETIF_PKTPOOL_MBUF_CACHE_MIN    32
@@ -79,6 +83,8 @@ static portid_t bond_pid_base = -1;
 static portid_t bond_pid_end = -1; // not inclusive
 
 static portid_t port_id_end = 0;
+
+volatile bool force_quit;
 
 static uint16_t g_nports;
 
@@ -159,6 +165,25 @@ static uint8_t g_slave_lcore_num;
 static uint8_t g_isol_rx_lcore_num;
 static uint64_t g_slave_lcore_mask;
 static uint64_t g_isol_rx_lcore_mask;
+
+//add by jsh, 21.3.11
+static struct rte_node_ethdev_config ethdev_conf[RTE_MAX_ETHPORTS];
+
+//add by jsh, 21.3.11
+static uint16_t nb_conf = 0;
+static uint16_t nb_graphs = 0;
+
+struct 
+rte_node_ethdev_config *get_node_ethdev_config(void)
+{
+	return ethdev_conf;
+}
+
+uint16_t 
+get_node_ethdev_config_nb(void)
+{
+	return nb_conf;
+}
 
 bool dp_vs_fdir_filter_enable = true;
 
@@ -299,7 +324,7 @@ static void rx_queue_number_handler(vector_t tokens)
                 current_device->name, rx_queues);
         current_device->rx_queue_nb = rx_queues;
     }
-
+	printf("current_device->name: %s, current_device->rx_queue_nb = %d.\n", current_device->name, current_device->rx_queue_nb);
     FREE_PTR(str);
 }
 
@@ -948,24 +973,24 @@ static void netif_cfgfile_term(void)
 #include <netinet/in.h>
 
 static inline int parse_ether_hdr(struct rte_mbuf *mbuf, uint16_t port, uint16_t queue) {
-    struct ether_hdr *eth_hdr;
+    struct rte_ether_hdr *eth_hdr;
     char saddr[18], daddr[18];
-    eth_hdr = rte_pktmbuf_mtod(mbuf, struct ether_hdr *);
-    ether_format_addr(saddr, sizeof(saddr), &eth_hdr->s_addr);
-    ether_format_addr(daddr, sizeof(daddr), &eth_hdr->d_addr);
+    eth_hdr = rte_pktmbuf_mtod(mbuf, struct rte_ether_hdr *);
+    rte_ether_format_addr(saddr, sizeof(saddr), &eth_hdr->s_addr);
+    rte_ether_format_addr(daddr, sizeof(daddr), &eth_hdr->d_addr);
     RTE_LOG(INFO, NETIF, "[%s] lcore=%u port=%u queue=%u ethtype=%0x saddr=%s daddr=%s\n",
             __func__, rte_lcore_id(), port, queue, rte_be_to_cpu_16(eth_hdr->ether_type),
             saddr, daddr);
     return EDPVS_OK;
 }
 
-static inline int is_ipv4_pkt_valid(struct ipv4_hdr *iph, uint32_t link_len)
+static inline int is_ipv4_pkt_valid(struct rte_ipv4_hdr *iph, uint32_t link_len)
 {
     if (((iph->version_ihl) >> 4) != 4)
         return EDPVS_INVAL;
     if ((iph->version_ihl & 0xf) < 5)
         return EDPVS_INVAL;
-    if (rte_cpu_to_be_16(iph->total_length) < sizeof(struct ipv4_hdr))
+    if (rte_cpu_to_be_16(iph->total_length) < sizeof(struct rte_ipv4_hdr))
         return EDPVS_INVAL;
     return EDPVS_OK;
 }
@@ -974,14 +999,14 @@ static void parse_ipv4_hdr(struct rte_mbuf *mbuf, uint16_t port, uint16_t queue)
 {
     char saddr[16], daddr[16];
     uint16_t lcore;
-    struct ipv4_hdr *iph;
-    struct udp_hdr *uh;
+    struct rte_ipv4_hdr *iph;
+    struct rte_udp_hdr *uh;
 
-    iph = rte_pktmbuf_mtod_offset(mbuf, struct ipv4_hdr *, sizeof(struct ether_hdr));
+    iph = rte_pktmbuf_mtod_offset(mbuf, struct rte_ipv4_hdr *, sizeof(struct rte_ether_hdr));
     if (is_ipv4_pkt_valid(iph, mbuf->pkt_len) < 0)
         return;
-    uh = rte_pktmbuf_mtod_offset(mbuf, struct udp_hdr *, sizeof(struct ether_hdr) +
-            (IPV4_HDR_IHL_MASK & iph->version_ihl) * sizeof(uint32_t));
+    uh = rte_pktmbuf_mtod_offset(mbuf, struct rte_udp_hdr *, sizeof(struct rte_ether_hdr) +
+            (RTE_IPV4_HDR_IHL_MASK & iph->version_ihl) * sizeof(uint32_t));
 
     lcore = rte_lcore_id();
     if (!inet_ntop(AF_INET, &iph->src_addr, saddr, sizeof(saddr)))
@@ -991,7 +1016,7 @@ static void parse_ipv4_hdr(struct rte_mbuf *mbuf, uint16_t port, uint16_t queue)
 
     RTE_LOG(INFO, NETIF, "[%s] lcore=%u port=%u queue=%u ipv4_hl=%u tos=%u tot=%u "
             "id=%u ttl=%u prot=%u src=%s dst=%s sport=%04x|%u dport=%04x|%u\n",
-            __func__, lcore, port, queue, IPV4_HDR_IHL_MASK & iph->version_ihl,
+            __func__, lcore, port, queue, RTE_IPV4_HDR_IHL_MASK & iph->version_ihl,
             iph->type_of_service, ntohs(iph->total_length),
             ntohs(iph->packet_id), iph->time_to_live, iph->next_proto_id, saddr, daddr,
             uh->src_port, ntohs(uh->src_port), uh->dst_port, ntohs(uh->dst_port));
@@ -1000,30 +1025,95 @@ static void parse_ipv4_hdr(struct rte_mbuf *mbuf, uint16_t port, uint16_t queue)
 
 __rte_unused static void pkt_send_back(struct rte_mbuf *mbuf, struct netif_port *port)
 {
-    struct ether_hdr *ehdr;
-    struct ether_addr eaddr;
-    ehdr = rte_pktmbuf_mtod(mbuf, struct ether_hdr*);
-    ether_addr_copy(&ehdr->s_addr, &eaddr);
-    ether_addr_copy(&ehdr->d_addr, &ehdr->s_addr);
-    ether_addr_copy(&eaddr, &ehdr->d_addr);
+    struct rte_ether_hdr *ehdr;
+    struct rte_ether_addr eaddr;
+    ehdr = rte_pktmbuf_mtod(mbuf, struct rte_ether_hdr*);
+    rte_ether_addr_copy(&ehdr->s_addr, &eaddr);
+    rte_ether_addr_copy(&ehdr->d_addr, &ehdr->s_addr);
+    rte_ether_addr_copy(&eaddr, &ehdr->d_addr);
     netif_xmit(mbuf, port);
 }
 #endif
 
 /********************************************* mbufpool *******************************************/
-static struct rte_mempool *pktmbuf_pool[DPVS_MAX_SOCKET];
+static struct rte_mempool **pktmbuf_pool[RTE_MAX_ETHPORTS][DPVS_MAX_SOCKET];
+
+
+#define MBUF_PRIV2_MIN_SIZE 64
+/*
+#define NB_MBUF(nports)                                                        \
+		RTE_MAX((nports * nb_rx_queue * nb_rxd +							   \
+			 nports * nb_lcores * RTE_GRAPH_BURST_SIZE +				   \
+			 nports * n_tx_queue * nb_txd + 							   \
+			 nb_lcores * netif_pktpool_mbuf_cache), 8192u)
+*/
+
+
+static int
+init_mem(uint16_t portid, uint32_t nb_mbuf)
+{
+	uint32_t lcore_id;
+	int socketid;
+	char poolname[64];
+
+	for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++) {
+		if (rte_lcore_is_enabled(lcore_id) == 0)
+			continue;
+
+		if (numa_on)
+			socketid = rte_lcore_to_socket_id(lcore_id);
+		else
+			socketid = 0;
+
+		if (socketid >= DPVS_MAX_SOCKET) {
+			rte_exit(EXIT_FAILURE,
+				 "Socket %d of lcore %u is out of range %d\n",
+				 socketid, lcore_id, DPVS_MAX_SOCKET);
+		}
+
+		if (pktmbuf_pool[portid][socketid] == NULL) {
+			snprintf(poolname, sizeof(poolname), "mbuf_pool_%d:%d", portid, socketid);
+			/* Create a pool with priv size of a cacheline */
+			pktmbuf_pool[portid][socketid] = rte_pktmbuf_pool_create(poolname, nb_mbuf,
+	                netif_pktpool_mbuf_cache, MBUF_PRIV2_MIN_SIZE, RTE_MBUF_DEFAULT_BUF_SIZE, socketid);
+
+			if (pktmbuf_pool[portid][socketid] == NULL)
+				rte_exit(EXIT_FAILURE,
+					 "Cannot init mbuf pool on port-socket : %d %d\n",
+					 portid, socketid);
+			else
+				printf("Allocated mbuf pool on port-socket : %d %d\n",
+				       portid, socketid);
+		}
+	}
+
+	return 0;
+}
 
 static inline void netif_pktmbuf_pool_init(void)
 {
-    int i;
-    char poolname[32];
-    for (i = 0; i < get_numa_nodes(); i++) {
-        snprintf(poolname, sizeof(poolname), "mbuf_pool_%d", i);
-        pktmbuf_pool[i] = rte_pktmbuf_pool_create(poolname, netif_pktpool_nb_mbuf,
-                netif_pktpool_mbuf_cache, 0, RTE_MBUF_DEFAULT_BUF_SIZE, i);
-        if (!pktmbuf_pool[i])
-            rte_exit(EXIT_FAILURE, "Cannot init mbuf pool on socket %d", i);
-    }
+	uint16_t portid;
+	uint32_t nb_lcores, nb_ports;
+	int ret = 0;
+    int i,j;
+
+	nb_ports = dpvs_rte_eth_dev_count();
+	nb_lcores = rte_lcore_count();
+
+	uint32_t per_port_mbuf_nb = (uint32_t)netif_pktpool_nb_mbuf/nb_ports;
+	RTE_ETH_FOREACH_DEV(portid){
+		if (!per_port_pool) {
+			/* portid = 0; this is *not* signifying the first port,
+			 * rather, it signifies that portid is ignored.
+			 */
+			ret = init_mem(0, netif_pktpool_nb_mbuf);
+		} else {
+			ret = init_mem(portid, per_port_mbuf_nb);
+		}
+		if (ret < 0)
+			rte_exit(EXIT_FAILURE, "init_mem() failed\n");
+	}
+
 }
 
 /******************************************* pkt-type *********************************************/
@@ -1128,7 +1218,7 @@ static void isol_rxq_del(struct rx_partner *isol_rxq, bool force);
 
 static void config_lcores(struct list_head *worker_list)
 {
-    int ii, tk;
+    int ii, tk, ln;
     int cpu_id_min, cpu_left, cpu_cnt;
     lcoreid_t id = 0;
     portid_t pid;
@@ -1164,6 +1254,7 @@ static void config_lcores(struct list_head *worker_list)
         assert(worker_min != NULL);
 
         tk = 0;
+		ln = 0;
         lcore_conf[id].id = worker_min->cpu_id;
         if (!strncmp(worker_min->type, "slave", sizeof("slave")))
             lcore_conf[id].type = LCORE_ROLE_FWD_WORKER;
@@ -1172,6 +1263,7 @@ static void config_lcores(struct list_head *worker_list)
         else
             lcore_conf[id].type = LCORE_ROLE_IDLE;
 
+		printf("config_lcores : now lcore_conf[%d]\n", id);
         list_for_each_entry_reverse(queue, &worker_min->port_list, queue_list_node) {
             port = netif_port_get_by_name(queue->port_name);
             if (port)
@@ -1183,6 +1275,13 @@ static void config_lcores(struct list_head *worker_list)
             for (ii = 0; queue->rx_queues[ii] != NETIF_MAX_QUEUES && ii < NETIF_MAX_QUEUES;
                  ii++) {
                 lcore_conf[id].pqs[tk].rxqs[ii].id = queue->rx_queues[ii];
+				printf("lcore_conf[%d].pqs[%d].rxqs[%d].id = %d\n", id, tk, ii, queue->rx_queues[ii]);
+
+				lcore_conf[id].rx_queue_list[ln].port_id = pid; //lcore_confÏÂ³õÊ¼»¯port-id
+				snprintf(lcore_conf[id].rx_queue_list[ln].node_name, RTE_NODE_NAMESIZE, 
+					"ethdev_rx-%u-%u", pid, queue->rx_queues[ii]);
+				lcore_conf[id].rx_queue_list[ln++].queue_id = queue->rx_queues[ii]; //lcore_confÏÂ³õÊ¼»¯queue-id
+							/* Add this queue node to its graph */
                 if (queue->isol_rxq_lcore_ids[ii] != NETIF_LCORE_ID_INVALID) {
                     if (isol_rxq_add(queue->isol_rxq_lcore_ids[ii],
                                 port->id, queue->rx_queues[ii],
@@ -1207,7 +1306,9 @@ static void config_lcores(struct list_head *worker_list)
             lcore_conf[id].pqs[tk].ntxq = ii;
             tk++;
         }
+		printf("lcore_conf[%d].nports = %d\n", id, tk);
         lcore_conf[id].nports = tk;
+		lcore_conf[id].n_rx_queue = ln; //Í³¼ÆÔÚ¸ÃlcoreÏÂµÄËùÓÐ½ÓÊÕ¶ÓÁÐÊý¡£
         id++;
 
         list_move_tail(&worker_min->worker_list_node, worker_list);
@@ -1221,6 +1322,13 @@ portid_t port2index[DPVS_MAX_LCORE][NETIF_MAX_PORTS];
 
 static void lcore_index_init(void)
 {
+	/*lcore2index[0]³õÊ¼»¯ÎÞÐ§ÊÇÒòÎªµÚÒ»¸öÍ¨³£ÊÇmaster¡£
+	ÀýÈç
+	lcore_id :  0 1 2 3 4 5 6
+	index :     7 0 1 2 3 4 5 7 
+	Òò´Ë£¬lcore_conf[0]±£´æµÄÊÇlcore_idÎª1Ïß³ÌµÄÖµ
+	      lcore_conf[1]±£´æµÄÊÇlcore_idÎª2Ïß³ÌµÄÖµ
+	*/
     lcoreid_t ii;
     int tk = 0;
     for (ii = 0; ii <= DPVS_MAX_LCORE; ii++) {
@@ -1275,7 +1383,8 @@ void netif_get_slave_lcores(uint8_t *nb, uint64_t *mask)
 
     while (lcore_conf[i].nports > 0) {
         /* LCORE_ROLE_KNI_WORKER should be excluded,
-         * as ports is configured for KNI core. */
+         * as ports is configured for KNI core.
+         Ó¦¸ÃÅÅ³ýLCORE_ROLE_KNI_WORKER£¬ÒòÎª¶Ë¿ÚÊÇÎªKNI coreÅäÖÃµÄ¡£ */
         if (lcore_conf[i].type == LCORE_ROLE_FWD_WORKER) {
             slave_lcore_nb++;
             slave_lcore_mask |= (1L << lcore_conf[i].id);
@@ -1335,6 +1444,7 @@ static void lcore_role_init(void)
             g_lcore_role[cid] = LCORE_ROLE_MAX;
 
     cid = rte_get_master_lcore();
+	printf("master cid = %d, g_lcore_role[cid] = %d\n", cid, g_lcore_role[cid]);
 
     assert(g_lcore_role[cid] == LCORE_ROLE_IDLE);
     g_lcore_role[cid] = LCORE_ROLE_MASTER;
@@ -1382,6 +1492,210 @@ static int port_rx_queues_get(portid_t pid)
         i++;
     }
     return rx_ports;
+}
+
+static uint8_t
+netif_get_port_n_rx_queues(const portid_t port)
+{
+	uint16_t i = 0, j;
+	uint8_t queue = 0;
+    while (lcore_conf[i].n_rx_queue > 0) {
+        for (j = 0;  j < lcore_conf[i].n_rx_queue; j++) {
+            if (lcore_conf[i].rx_queue_list[j].port_id == port)
+                queue++;
+        }
+        i++;
+    }
+
+	return queue;
+}
+
+uint32_t netif_get_all_enabled_cores_nb(void){
+
+	uint32_t nb_lcores = 0;
+	uint32_t lcore_id;
+	struct netif_lcore_conf *qconf = NULL;
+
+	for (lcore_id = 0; lcore_id < DPVS_MAX_LCORE; lcore_id++) {
+		if (rte_lcore_is_enabled(lcore_id) == 0)
+			continue;
+		nb_lcores++;
+	}
+
+	return nb_lcores;
+}
+void
+netif_init_graph_need_to_create(void)
+{
+	uint32_t nb_lcores, lcore_id;
+	struct netif_lcore_conf *qconf = NULL;
+
+	for (lcore_id = 0; lcore_id < DPVS_MAX_LCORE; lcore_id++) {
+		if (rte_lcore_is_enabled(lcore_id) == 0)
+			continue;
+		qconf = &lcore_conf[lcore_id];
+		/* Alloc a graph to this lcore only if source exists  */
+		if ((qconf->type == LCORE_ROLE_FWD_WORKER)&&(qconf->n_rx_queue))
+			nb_graphs++;//Õâ¸öÓ¦¸ÃÊÇlcoreµÄ¸öÊý
+	}
+
+	printf("graph number to create : %d\n", nb_graphs);
+}
+
+//¾­netif_init_graph_need_to_create³õÊ¼»¯È«¾Ö±äÁ¿nb_graphs·½¿ÉÓÃ
+uint16_t 
+netif_get_graph_need_to_create(void)
+{
+	return nb_graphs;
+}
+
+static uint8_t 
+netif_get_port_n_tx_queues(portid_t pid)
+{
+	uint8_t queue = 0;
+	uint8_t slave_lcore_nb;
+	uint64_t slave_lcore_mask;
+
+	netif_get_slave_lcores(&slave_lcore_nb, &slave_lcore_mask);
+
+	queue = slave_lcore_nb;
+    return queue;
+}
+
+void
+init_rte_node_ethdev_config(portid_t pid){
+	struct netif_port *dev;
+	
+	ethdev_conf[nb_conf].port_id = (uint16_t)pid;
+	ethdev_conf[nb_conf].num_rx_queues = netif_get_port_n_rx_queues(pid);
+	ethdev_conf[nb_conf].num_tx_queues = netif_get_port_n_tx_queues(pid);
+	printf("ethdev_conf[%d].port is = %d, num_rx_queues is %d, num_tx_queues is %d.\n", 
+		 nb_conf, pid, ethdev_conf[nb_conf].num_rx_queues, ethdev_conf[nb_conf].num_tx_queues);
+	dev = netif_port_get(pid);
+	if(dev){
+		ethdev_conf[nb_conf].mp = pktmbuf_pool[0];
+		ethdev_conf[nb_conf].mp_count = 1;	//ÔÝÊ±ÏÈÐ´ËÀ
+	}
+
+	
+	nb_conf++;//¿É¼û¸ÃÖµÊÇÍø¿¨µÄ¸öÊý
+
+	printf("nb_conf is %d\n", nb_conf);
+	return;
+}
+
+int 
+init_graph_for_per_slave_core(void)
+{
+	static const char * const default_patterns[] = {
+		"ether*",
+		"ethdev_tx-*",
+		"pkt_drop",
+	};
+
+	uint16_t nb_patterns;
+	const char **node_patterns;
+	struct rte_graph_param graph_conf;
+	int ret = 0;
+	struct netif_lcore_conf *qconf;
+	uint32_t lcore_id;
+	
+	nb_patterns = RTE_DIM(default_patterns);
+	node_patterns = malloc((MAX_RX_QUEUE_PER_LCORE + nb_patterns) *
+				   sizeof(*node_patterns));
+	if (!node_patterns)
+		return -ENOMEM;
+	memcpy(node_patterns, default_patterns,
+		   nb_patterns * sizeof(*node_patterns));
+
+	memset(&graph_conf, 0, sizeof(graph_conf));
+	graph_conf.node_patterns = node_patterns;
+
+	for (lcore_id = 0; lcore_id < DPVS_MAX_LCORE; lcore_id++) {
+		rte_graph_t graph_id;
+		rte_edge_t i;
+
+		if (rte_lcore_is_enabled(lcore_id) == 0)
+			continue;
+
+		qconf = &lcore_conf[lcore_id];
+
+		/* Skip graph creation if no source exists & ²»ÊÇ×ª·¢ºËÂÔ¹ý*/
+		if (!qconf->n_rx_queue || LCORE_ROLE_FWD_WORKER != qconf->type)
+			continue;
+
+		/* Add rx node patterns of this lcore 
+		----------------------------------------------------------
+		|		   	   |	 			|	 |	  |    |	|	 |
+		----------------------------------------------------------
+		  "ethdev-tx-*"  "pkt_drop"  "ethdev-rx-x-x"	 */
+		for (i = 0; i < qconf->n_rx_queue; i++) {
+			graph_conf.node_patterns[nb_patterns + i] =
+				qconf->rx_queue_list[i].node_name;
+		}
+
+		graph_conf.nb_node_patterns = nb_patterns + i;
+		graph_conf.socket_id = rte_lcore_to_socket_id(lcore_id);
+
+		snprintf(qconf->name, sizeof(qconf->name), "worker_%u",
+			 qconf->id);
+
+		graph_id = rte_graph_create(qconf->name, &graph_conf);
+		if (graph_id == RTE_GRAPH_ID_INVALID)
+			rte_exit(EXIT_FAILURE,
+				 "rte_graph_create(): graph_id invalid"
+				 " for lcore %u\n", lcore_id);
+
+		qconf->graph_id = graph_id;
+		qconf->graph = rte_graph_lookup(qconf->name);
+		if (!qconf->graph)
+			rte_exit(EXIT_FAILURE, "rte_graph_lookup(): graph %s not found\n",  qconf->name);
+		//æ‰“å°å›¾ä¸‹é¢çš„æ‰€æœ‰èŠ‚ç‚¹ï¼Œä»¥åŠä»–çš„è¾?		rte_graph_node_printf(qconf->graph, true);
+	}
+
+	/* Add route to ip4 graph infra 
+	ret = add_route_to_ip4_graph_infra();
+	if(ret){
+		rte_exit(EXIT_FAILURE, "add_route_to_ip4_graph_infra: err=%d\n", ret);
+	}*/
+		
+	return ret;
+}
+
+/* Main processing loop */
+/* Log type */
+#define RTE_LOGTYPE_L3FWD_GRAPH RTE_LOGTYPE_USER1
+
+static void
+graph_main_loop(void *conf)
+{
+	struct netif_lcore_conf *qconf;
+	struct rte_graph *graph;
+	lcoreid_t cid;
+
+	RTE_SET_USED(conf);
+
+	cid = rte_lcore_id();
+	qconf = &lcore_conf[lcore2index[cid]];
+	graph = qconf->graph;
+
+	//printf("enter graph_main_loop\n");
+	if (!graph) {
+		RTE_LOG(INFO, L3FWD_GRAPH, "Lcore %u has nothing to do\n",
+			cid);
+		return;
+	}
+
+	/*RTE_LOG(INFO, L3FWD_GRAPH,
+		"Entering main loop on lcore %u, graph %s(%p)\n", cid,
+		qconf->name, graph);*/
+
+	//while (likely(!force_quit))
+	//rte_delay_ms(10);
+	//printf("graph->name : %s, cid = %d.\n", graph->name, cid);
+	rte_graph_walk(graph);
+
+	return;
 }
 
 static int port_tx_queues_get(portid_t pid)
@@ -1433,9 +1747,47 @@ static uint8_t get_configured_port_nb(int lcores, const struct netif_lcore_conf 
 #define LCONFCHK_INCORRECT_TX_QUEUE_NUM     -6
 #define LCONFCHK_NO_SLAVE_LCORES            -7
 
+/*
+static int
+netif_check_lcore_params(int lcores, const struct netif_lcore_conf *lcore_conf)
+{
+	uint8_t queue, lcore;
+	int socketid;
+	uint16_t i;
+
+	for (i = 0; i < lcores; ++i) {
+		lcore_conf[i].
+		queue = lcore_params[i].queue_id;
+		if (queue >= MAX_RX_QUEUE_PER_PORT) {
+			printf("Invalid queue number: %hhu\n", queue);
+			return -1;
+		}
+		lcore = lcore_params[i].lcore_id;
+		if (!rte_lcore_is_enabled(lcore)) {
+			printf("Error: lcore %hhu is not enabled in lcore mask\n",
+			       lcore);
+			return -1;
+		}
+
+		if (lcore == rte_get_main_lcore()) {
+			printf("Error: lcore %u is main lcore\n", lcore);
+			return -1;
+		}
+		socketid = rte_lcore_to_socket_id(lcore);
+		if ((socketid != 0) && (numa_on == 0)) {
+			printf("Warning: lcore %hhu is on socket %d with numa off\n",
+			       lcore, socketid);
+		}
+	}
+
+	return 0;
+}
+*/
 static int check_lcore_conf(int lcores, const struct netif_lcore_conf *lcore_conf)
 {
+	printf("---------------------------------check_conf-----------------------------\n");
     int i = 0, j, k;
+	int ret = 0;
     uint8_t nports, nqueues;
     uint8_t nports_conf = get_configured_port_nb(lcores, lcore_conf);
     portid_t pid;
@@ -1493,14 +1845,21 @@ static int check_lcore_conf(int lcores, const struct netif_lcore_conf *lcore_con
 
     i = 0;
     while (lcore_conf[i].nports > 0) {
-        if (lcore_conf[i].nports != nports_conf)
-            return LCONFCHK_INCORRECT_TX_QUEUE_NUM;
-        for (j = 0; j < lcore_conf[i].nports; j++)
-            if (lcore_conf[i].pqs[j].ntxq < 1)
-                return LCONFCHK_INCORRECT_TX_QUEUE_NUM;
+		printf("lcore_conf[%d].nports = %d, nports_conf = %d.\n", i, lcore_conf[i].nports, nports_conf);
+		//è¿™ä¸ªé—®é¢˜çš„å‘çŽ°è¿‡ç¨‹åŠå…¶æ¶å¿ƒã€‚æ­¤å¤„åŽ»æŽ‰ï¼Œå› ä¸ºï¼Œdpvsé™åˆ¶äº†æ¯ä¸ªlcoreéƒ½è¦æœ‰æ‰€æœ‰çš„ç½‘å¡é˜Ÿåˆ—ï¼Œç¼ºä¸€ä¸å¯ï¼Œä½†æ˜¯æˆ‘ä»¬æƒ³è¦æ›´çµæ´»ã€‚åŽ»æŽ‰è¿™ä¸ªé™åˆ¶ï¼ï¼
+		/*if (lcore_conf[i].nports != nports_conf)
+            return LCONFCHK_INCORRECT_TX_QUEUE_NUM;*/
+        for (j = 0; j < lcore_conf[i].nports; j++){
+			printf("lcore_conf[%d].pqs[%d].ntxq = %d.\n", i, j, lcore_conf[i].pqs[j].ntxq);
+			if (lcore_conf[i].pqs[j].ntxq < 1)
+				return LCONFCHK_INCORRECT_TX_QUEUE_NUM;
+		}
         if (++i >= lcores)
             break;
     }
+	//ret = netif_check_lcore_params(lcores, lcore_conf));
+	if(ret != 0)
+		return  ret;
     return LCONFCHK_OK;
 }
 
@@ -1736,7 +2095,7 @@ static int build_port_queue_lcore_map(void)
 
                 dev = netif_port_get(pid);
                 if (dev) {
-                    ether_format_addr(pql_map[pid].mac_addr,
+                    rte_ether_format_addr(pql_map[pid].mac_addr,
                             sizeof(pql_map[pid].mac_addr), &dev->addr);
                 }
             }
@@ -2014,10 +2373,10 @@ static inline void netif_tx_burst(lcoreid_t cid, portid_t pid, queueid_t qindex)
         return;
 
     dev = netif_port_get(pid);
-    if (dev && (dev->flag & NETIF_PORT_FLAG_FORWARD2KNI)) {
+    if (dev && (dev->offload & NETIF_PORT_FLAG_FORWARD2KNI)) {
         for (; i < txq->len; i++) {
             if (NULL == (mbuf_copied = mbuf_copy(txq->mbufs[i],
-                pktmbuf_pool[dev->socket])))
+                pktmbuf_pool[0][dev->socket])))
                 RTE_LOG(WARNING, NETIF, "%s: Failed to copy mbuf\n", __func__);
             else
                 kni_ingress(mbuf_copied, dev);
@@ -2113,7 +2472,7 @@ static inline int validate_xmit_mbuf(struct rte_mbuf *mbuf,
 
     /* 802.1q VLAN */
     if (mbuf->ol_flags & PKT_TX_VLAN_PKT) {
-        if (!(dev->flag & NETIF_PORT_FLAG_TX_VLAN_INSERT_OFFLOAD)) {
+        if (!(dev->offload & NETIF_PORT_TX_VLAN_INSERT_OFFLOAD)) {
             err = vlan_insert_tag(mbuf, htons(ETH_P_8021Q),
                                   mbuf_vlan_tag_get_id(mbuf));
             mbuf->ol_flags &= (~PKT_TX_VLAN_PKT);
@@ -2146,7 +2505,7 @@ int netif_hard_xmit(struct rte_mbuf *mbuf, struct netif_port *dev)
     cid = rte_lcore_id();
 
     if (likely(mbuf->ol_flags & PKT_TX_IP_CKSUM))
-        mbuf->l2_len = sizeof(struct ether_hdr);
+        mbuf->l2_len = sizeof(struct rte_ether_hdr);
 
     if (rte_get_master_lcore() == cid) { // master thread
         struct dpvs_msg *msg;
@@ -2184,7 +2543,7 @@ int netif_hard_xmit(struct rte_mbuf *mbuf, struct netif_port *dev)
     /* port id is determined by routing */
     pid = dev->id;
     /* qindex is hashed by physical address of mbuf */
-    qindex = (((uint32_t) mbuf->buf_physaddr) >> 8) %
+    qindex = (((uint32_t) mbuf->buf_addr) >> 8) %
         (lcore_conf[lcore2index[cid]].pqs[port2index[cid][pid]].ntxq);
     //RTE_LOG(DEBUG, NETIF, "tx-queue hash(%x) = %d\n", ((uint32_t)mbuf->buf_physaddr) >> 8, qindex);
     txq = &lcore_conf[lcore2index[cid]].pqs[port2index[cid][pid]].txqs[qindex];
@@ -2222,7 +2581,7 @@ int netif_xmit(struct rte_mbuf *mbuf, struct netif_port *dev)
     mbuf_refcnt = rte_mbuf_refcnt_read(mbuf);
     assert((mbuf_refcnt >= 1) && (mbuf_refcnt <= 64));
 
-    if (dev->flag & NETIF_PORT_FLAG_TC_EGRESS) {
+    if (dev->flags & NETIF_PORT_FLAG_TC_EGRESS) {
         mbuf = tc_handle_egress(netif_tc(dev), mbuf, &ret);
         if (likely(!mbuf))
             return ret;
@@ -2231,14 +2590,14 @@ int netif_xmit(struct rte_mbuf *mbuf, struct netif_port *dev)
     return netif_hard_xmit(mbuf, dev);
 }
 
-static inline eth_type_t eth_type_parse(const struct ether_hdr *eth_hdr,
+inline eth_type_t eth_type_parse(const struct rte_ether_hdr *eth_hdr,
                                         const struct netif_port *dev)
 {
     if (eth_addr_equal(&dev->addr, &eth_hdr->d_addr))
         return ETH_PKT_HOST;
 
-    if (is_multicast_ether_addr(&eth_hdr->d_addr)) {
-        if (is_broadcast_ether_addr(&eth_hdr->d_addr))
+    if (rte_is_multicast_ether_addr(&eth_hdr->d_addr)) {
+        if (rte_is_broadcast_ether_addr(&eth_hdr->d_addr))
             return ETH_PKT_BROADCAST;
         else
             return ETH_PKT_MULTICAST;
@@ -2279,6 +2638,7 @@ static inline int netif_deliver_mbuf(struct rte_mbuf *mbuf,
     assert(mbuf->port <= NETIF_MAX_PORTS);
     assert(dev != NULL);
 
+    flow_debug_trace(FLOW_DEBUG_BASIC, "%s: entry", __FUNCTION__);
     pt = pkt_type_get(eth_type, dev);
 
     if (NULL == pt) {
@@ -2290,25 +2650,28 @@ static inline int netif_deliver_mbuf(struct rte_mbuf *mbuf,
     }
 
     /*clone arp pkt to every queue*/
-    if (pt->type == rte_cpu_to_be_16(ETHER_TYPE_ARP) && !pkts_from_ring) {
+    if (pt->type == rte_cpu_to_be_16(RTE_ETHER_TYPE_ARP) && !pkts_from_ring) {
         struct rte_mempool *mbuf_pool;
         struct rte_mbuf *mbuf_clone;
         uint8_t i;
-        struct arp_hdr *arp;
+        struct rte_arp_hdr *arp;
         unsigned socket_id;
 
         socket_id = rte_socket_id();
-        mbuf_pool = pktmbuf_pool[socket_id];
+        mbuf_pool = pktmbuf_pool[0][socket_id];
 
-        rte_pktmbuf_adj(mbuf, sizeof(struct ether_hdr));
-        arp = rte_pktmbuf_mtod(mbuf, struct arp_hdr *);
-        rte_pktmbuf_prepend(mbuf,(uint16_t)sizeof(struct ether_hdr));
-        if (rte_be_to_cpu_16(arp->arp_op) == ARP_OP_REPLY) {
+        rte_pktmbuf_adj(mbuf, sizeof(struct rte_ether_hdr));
+        arp = rte_pktmbuf_mtod(mbuf, struct rte_arp_hdr *);
+        rte_pktmbuf_prepend(mbuf,(uint16_t)sizeof(struct rte_ether_hdr));
+        if (rte_be_to_cpu_16(arp->arp_opcode) == RTE_ARP_OP_REPLY) {
             for (i = 0; i < DPVS_MAX_LCORE; i++) {
                 if ((i == cid) || (!is_lcore_id_fwd(i))
                      || (i == rte_get_master_lcore()))
                     continue;
                 /*rte_pktmbuf_clone will not clone pkt.data, just copy pointer!*/
+				//´Ë´¦»¹¿ÉÒÔÓÅ»¯£¬±ÈÈçarp_ringËùÔÚµÄlcoreÈç¹û²»ÊÇºÍ±¾µØlcoreÔÚÒ»¸ösocketÉÏµÄ»°
+				//»áÓÐ¿çºË·ÃÎÊµÄÊÂÇé·¢Éú¡£µ«ÊÇ¼´Ê¹´Ë´¦mbuf_poolÓÃµÄÊÇringËùÔÚµÄsocket£¬ÕâÔÚÉêÇëÄÚ´æµÄ
+				//Ê±ºò¾Í¿çsocketÁË£¬ËùÒÔÊÇ²»¿ÉÒÔ±ÜÃâµÄÂð£¿£¿
                 mbuf_clone = rte_pktmbuf_clone(mbuf, mbuf_pool);
                 if (mbuf_clone) {
                     int ret = rte_ring_enqueue(arp_ring[i], mbuf_clone);
@@ -2326,10 +2689,10 @@ static inline int netif_deliver_mbuf(struct rte_mbuf *mbuf,
         }
     }
 
-    mbuf->l2_len = sizeof(struct ether_hdr);
-    /* Remove ether_hdr at the beginning of an mbuf */
+    mbuf->l2_len = sizeof(struct rte_ether_hdr);
+    /* Remove rte_ether_hdr at the beginning of an mbuf */
     data_off = mbuf->data_off;
-    if (unlikely(NULL == rte_pktmbuf_adj(mbuf, sizeof(struct ether_hdr)))) {
+    if (unlikely(NULL == rte_pktmbuf_adj(mbuf, sizeof(struct rte_ether_hdr)))) {
         rte_pktmbuf_free(mbuf);
         return EDPVS_INVPKT;
     }
@@ -2376,7 +2739,7 @@ void lcore_process_packets(struct netif_queue_conf *qconf, struct rte_mbuf **mbu
 {
     int i, t;
     int pkt_len = 0;
-    struct ether_hdr *eth_hdr;
+    struct rte_ether_hdr *eth_hdr;
     struct rte_mbuf *mbuf_copied = NULL;
 
     /* prefetch packets */
@@ -2404,7 +2767,7 @@ void lcore_process_packets(struct netif_queue_conf *qconf, struct rte_mbuf **mbu
             t++;
         }
 
-        eth_hdr = rte_pktmbuf_mtod(mbuf, struct ether_hdr *);
+        eth_hdr = rte_pktmbuf_mtod(mbuf, struct rte_ether_hdr *);
         /* reuse mbuf.packet_type, it was RTE_PTYPE_XXX */
         mbuf->packet_type = eth_type_parse(eth_hdr, dev);
 
@@ -2415,9 +2778,9 @@ void lcore_process_packets(struct netif_queue_conf *qconf, struct rte_mbuf **mbu
          * rte_mbuf will be modified in the following procedure,
          * we should use mbuf_copy instead of rte_pktmbuf_clone.
          */
-        if (dev->flag & NETIF_PORT_FLAG_FORWARD2KNI) {
+        if (dev->flags & NETIF_PORT_FLAG_FORWARD2KNI) {
             if (likely(NULL != (mbuf_copied = mbuf_copy(mbuf,
-                                pktmbuf_pool[dev->socket]))))
+                                pktmbuf_pool[0][dev->socket]))))
                 kni_ingress(mbuf_copied, dev);
             else
                 RTE_LOG(WARNING, NETIF, "%s: Failed to copy mbuf\n",
@@ -2451,11 +2814,11 @@ void lcore_process_packets(struct netif_queue_conf *qconf, struct rte_mbuf **mbu
                 continue;
             }
 
-            eth_hdr = rte_pktmbuf_mtod(mbuf, struct ether_hdr *);
+            eth_hdr = rte_pktmbuf_mtod(mbuf, struct rte_ether_hdr *);
         }
         /* handler should free mbuf */
         netif_deliver_mbuf(mbuf, eth_hdr->ether_type, dev, qconf,
-                           (dev->flag & NETIF_PORT_FLAG_FORWARD2KNI) ? true:false,
+                           (dev->flags & NETIF_PORT_FLAG_FORWARD2KNI) ? true:false,
                            cid, pkts_from_ring);
 
         lcore_stats[cid].ibytes += pkt_len;
@@ -2488,6 +2851,9 @@ static void lcore_job_recv_fwd(void *arg)
     lcoreid_t cid;
     struct netif_queue_conf *qconf;
 
+	//æš‚æ—¶å…ˆåŽ»æŽ‰è¿™éƒ¨åˆ†åŠŸèƒ½ï¼Œç”¨å›¾èŠ‚ç‚¹æŽ¥æ”¶
+	return;
+
     cid = rte_lcore_id();
     assert(LCORE_ID_ANY != cid);
 
@@ -2516,6 +2882,8 @@ static void lcore_job_xmit(void *args)
     portid_t pid;
     struct netif_queue_conf *qconf;
 
+	//tmpå°†dpvsæŽ¥æ”¶å‡½æ•°åŽ»æŽ‰
+	return;
     cid = rte_lcore_id();
     for (i = 0; i < lcore_conf[lcore2index[cid]].nports; i++) {
         pid = lcore_conf[lcore2index[cid]].pqs[i].id;
@@ -2549,7 +2917,7 @@ static void lcore_job_timer_manage(void *args)
     }
 }
 
-#define NETIF_JOB_MAX   6
+#define NETIF_JOB_MAX   7
 
 static struct dpvs_lcore_job_array netif_jobs[NETIF_JOB_MAX] = {
     [0] = {
@@ -2586,6 +2954,12 @@ static struct dpvs_lcore_job_array netif_jobs[NETIF_JOB_MAX] = {
         .job.type = LCORE_JOB_LOOP,
         .job.func = lcore_job_timer_manage,
     },
+	[5] = {
+		.role = LCORE_ROLE_FWD_WORKER,
+		.job.name = "graph_main_loop",
+		.job.type = LCORE_JOB_LOOP,
+		.job.func = graph_main_loop,
+	},
 };
 
 static void netif_lcore_init(void)
@@ -2622,15 +2996,16 @@ static void netif_lcore_init(void)
 
     /* register lcore jobs*/
     if (g_kni_lcore_id == 0) {
-        netif_jobs[5].role = LCORE_ROLE_MASTER;
-        dpvs_lcore_job_init(&netif_jobs[5].job, "kni_master_proc",
+        netif_jobs[NETIF_JOB_MAX-1].role = LCORE_ROLE_MASTER;
+        dpvs_lcore_job_init(&netif_jobs[NETIF_JOB_MAX-1].job, "kni_master_proc",
                             LCORE_JOB_LOOP, kni_lcore_loop, 0);
     } else {
-        netif_jobs[5].role = LCORE_ROLE_KNI_WORKER;
-        dpvs_lcore_job_init(&netif_jobs[5].job, "kni_loop",
+        netif_jobs[NETIF_JOB_MAX-1].role = LCORE_ROLE_KNI_WORKER;
+        dpvs_lcore_job_init(&netif_jobs[NETIF_JOB_MAX-1].job, "kni_loop",
                             LCORE_JOB_LOOP, kni_lcore_loop, 0);
     }
 
+	printf("init netif job for slave lcore.\n");
     for (i = 0; i < NELEMS(netif_jobs); i++) {
         res = dpvs_lcore_job_register(&netif_jobs[i].job, netif_jobs[i].role);
         if (res < 0) {
@@ -2664,7 +3039,7 @@ static int update_bond_macaddr(struct netif_port *port)
     if (kni_dev_exist(port)) {
         ret = linux_set_if_mac(port->kni.name, (unsigned char *)&port->addr);
         if (ret == EDPVS_OK)
-            ether_addr_copy(&port->addr, &port->kni.addr);
+            rte_ether_addr_copy(&port->addr, &port->kni.addr);
     }
 
     return ret;
@@ -2900,20 +3275,20 @@ struct netif_port *netif_alloc(size_t priv_size, const char *namefmt,
         snprintf(dev->name, sizeof(dev->name), "%s", namefmt);
 
     dev->socket = SOCKET_ID_ANY;
-    dev->hw_header_len = sizeof(struct ether_hdr); /* default */
+    dev->hw_header_len = sizeof(struct rte_ether_hdr); /* default */
 
     if (setup)
         setup(dev);
 
     /* flag may set by setup() routine */
-    dev->flag |= NETIF_PORT_FLAG_ENABLED;
+    dev->flags |= NETIF_PORT_FLAG_ENABLED;
     dev->nrxq = nrxq;
     dev->ntxq = ntxq;
 
     /* virtual dev has no NUMA-node */
     if (dev->socket == SOCKET_ID_ANY)
         dev->socket = rte_socket_id();
-    dev->mbuf_pool = pktmbuf_pool[dev->socket];
+    dev->mbuf_pool = pktmbuf_pool[0][dev->socket];
 
     if (memcmp(&dev->addr, &mac_zero, sizeof(dev->addr)) == 0) {
         //TODO: use random lladdr ?
@@ -2923,6 +3298,7 @@ struct netif_port *netif_alloc(size_t priv_size, const char *namefmt,
         dev->mtu = ETH_DATA_LEN;
 
     rte_rwlock_init(&dev->dev_lock);
+	INIT_LIST_HEAD(&dev->upper_dev_list);
     netif_mc_init(dev);
 
     dev->in_ptr = rte_zmalloc(NULL, sizeof(struct inet_device), RTE_CACHE_LINE_SIZE);
@@ -2949,8 +3325,153 @@ struct netif_port *netif_alloc(size_t priv_size, const char *namefmt,
 int netif_free(struct netif_port *dev)
 {
     // TODO:
+
+	/*if(dev->in_ptr != NULL){
+		rte_free(dev->in_ptr);
+	}
+    rte_free(dev);*/
     return EDPVS_OK;
 }
+
+
+struct netif_upper {
+	struct netif_port *dev;
+	bool master;
+	struct list_head list;
+	//struct rcu_head rcu;
+	//struct list_head search_list;
+};
+
+static struct netif_upper *__netdev_find_upper(struct netif_port *dev,
+						struct netif_port *upper_dev)
+{
+	struct netif_upper *upper;
+
+	list_for_each_entry(upper, &dev->upper_dev_list, list) {
+		if (upper->dev == upper_dev)
+			return upper;
+	}
+	return NULL;
+}
+
+void netdev_upper_dev_unlink(struct netif_port *dev,
+			     struct netif_port *upper_dev)
+{
+	struct netif_upper *upper;
+
+	//ASSERT_RTNL();
+
+	upper = __netdev_find_upper(dev, upper_dev);
+	if (!upper)
+		return;
+	list_del_rcu(&upper->list);
+	netif_put(upper_dev);
+	//kfree_rcu(upper, rcu);
+	//rcuæ—¥åŽå†å®Œå–„
+	rte_free(upper);
+}
+
+static int __netdev_upper_dev_link(struct netif_port *dev,
+				   struct netif_port *upper_dev, bool master)
+{
+	
+	struct netif_upper *upper;
+    #if 0
+
+	ASSERT_RTNL();
+
+	if (dev == upper_dev)
+		return -EBUSY;
+
+	/* To prevent loops, check if dev is not upper device to upper_dev. */
+	if (__netdev_search_upper_dev(upper_dev, dev))
+		return -EBUSY;
+
+	if (__netdev_find_upper(dev, upper_dev))
+		return -EEXIST;
+
+	if (master && netdev_master_upper_dev_get(dev))
+		return -EBUSY;
+
+
+
+	upper->dev = upper_dev;
+	upper->master = master;
+	INIT_LIST_HEAD(&upper->search_list);
+	#endif
+	upper = rte_malloc("upper", sizeof(*upper), 0);
+	if (!upper)
+		return -EDPVS_NOMEM;
+	/* Ensure that master upper link is always the first item in list. */
+	upper->dev = upper_dev;
+	upper->master = master;
+	INIT_LIST_HEAD(&upper->list);
+	if (master)
+		list_add_rcu(&upper->list, &dev->upper_dev_list);
+	else
+		list_add_tail_rcu(&upper->list, &dev->upper_dev_list);
+	netif_hold(upper_dev);
+
+	return 0;
+}
+
+int netif_set_mtu(struct netif_port *dev, int new_mtu)
+{
+	const struct netif_ops *ops = dev->netif_ops;
+	int err;
+
+	if (new_mtu == dev->mtu)
+		return 0;
+
+	/*	MTU must be positive.	 */
+	if (new_mtu < 0)
+		return -EDPVS_INVAL;
+
+	/*if (!netif_device_present(dev))
+		return -EDPVS_NODEV;
+	*/
+	err = 0;
+	if (ops->op_change_mtu)
+		err = ops->op_change_mtu(dev, new_mtu);
+	else
+		dev->mtu = new_mtu;
+
+	//if (!err)
+		//call_netdevice_notifiers(NETDEV_CHANGEMTU, dev);
+	return err;
+}
+
+int netdev_master_upper_dev_link(struct netif_port *dev,
+				 struct netif_port *upper_dev)
+{
+	return __netdev_upper_dev_link(dev, upper_dev, true);
+}
+struct netif_port *netdev_master_upper_dev_get(struct netif_port *dev)
+{
+	struct netif_upper *upper;
+
+	//ASSERT_RTNL();
+
+	if (list_empty(&dev->upper_dev_list))
+		return NULL;
+
+	upper = list_first_entry(&dev->upper_dev_list,
+				 struct netif_upper, list);
+	if (likely(upper->master))
+		return upper->dev;
+	return NULL;
+}
+
+void netif_hold(struct netif_port *dev)
+{
+	rte_atomic32_inc(&dev->refcnt);
+}
+
+void netif_put(struct netif_port *dev)
+{
+	rte_atomic32_dec(&dev->refcnt);
+}
+
 
 static int bond_set_mc_list(struct netif_port *dev)
 {
@@ -2977,6 +3498,7 @@ static int bond_set_mc_list(struct netif_port *dev)
     return err;
 }
 
+#if 0
 static int bond_filter_supported(struct netif_port *dev, enum rte_filter_type fltype)
 {
     int i, err = EDPVS_NOTSUPP;
@@ -2994,7 +3516,7 @@ static int bond_filter_supported(struct netif_port *dev, enum rte_filter_type fl
 
     return err;
 }
-
+#endif
 static int bond_set_fdir_filt(struct netif_port *dev, enum rte_filter_op op,
                               const struct rte_eth_fdir_filter *filt)
 {
@@ -3019,7 +3541,7 @@ static int bond_set_fdir_filt(struct netif_port *dev, enum rte_filter_op op,
 
 static int dpdk_set_mc_list(struct netif_port *dev)
 {
-    struct ether_addr addrs[NETIF_MAX_HWADDR];
+    struct rte_ether_addr addrs[NETIF_MAX_HWADDR];
     int err;
     int ret;
     size_t naddr = NELEMS(addrs);
@@ -3045,10 +3567,21 @@ static int dpdk_set_mc_list(struct netif_port *dev)
     return EDPVS_OK;
 }
 
+static int dpdk_vlan_filer_rx_add_vid(struct netif_port *dev, uint16_t vlan_id, int on){
+	uint16_t port_id = dev->id;
+
+
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, EDPVS_NODEV);
+
+	return rte_eth_dev_vlan_filter(port_id, vlan_id, on);
+}
+#if 0
+
 static int dpdk_filter_supported(struct netif_port *dev, enum rte_filter_type fltype)
 {
     return rte_eth_dev_filter_supported(dev->id, fltype);
 }
+
 
 void netif_mask_fdir_filter(int af, const struct netif_port *port,
                             struct rte_eth_fdir_filter *filt)
@@ -3064,6 +3597,7 @@ void netif_mask_fdir_filter(int af, const struct netif_port *port,
     if (port->type != PORT_TYPE_GENERAL)
         return;
 
+	
     if (rte_eth_dev_filter_ctrl(port->id, RTE_ETH_FILTER_FDIR,
                 RTE_ETH_FILTER_INFO, &fdir_info) < 0) {
         RTE_LOG(DEBUG, NETIF, "%s: Fail to fetch fdir info of %s !\n",
@@ -3103,6 +3637,8 @@ void netif_mask_fdir_filter(int af, const struct netif_port *port,
     }
 }
 
+#endif
+#if 0
 static int dpdk_set_fdir_filt(struct netif_port *dev, enum rte_filter_op op,
                               const struct rte_eth_fdir_filter *filt)
 {
@@ -3120,39 +3656,40 @@ static int dpdk_set_fdir_filt(struct netif_port *dev, enum rte_filter_op op,
 
     return EDPVS_OK;
 }
-
+#endif
 static struct netif_ops dpdk_netif_ops = {
     .op_set_mc_list      = dpdk_set_mc_list,
-    .op_set_fdir_filt    = dpdk_set_fdir_filt,
-    .op_filter_supported = dpdk_filter_supported,
+    //.op_set_fdir_filt    = dpdk_set_fdir_filt,
+    //.op_filter_supported = dpdk_filter_supported,
+    .op_vlan_rx_add_vid  = dpdk_vlan_filer_rx_add_vid, 
 };
 
 static struct netif_ops bond_netif_ops = {
     .op_set_mc_list      = bond_set_mc_list,
-    .op_set_fdir_filt    = bond_set_fdir_filt,
-    .op_filter_supported = bond_filter_supported,
+    //.op_set_fdir_filt    = bond_set_fdir_filt,
+    //.op_filter_supported = bond_filter_supported,
 };
 
 static inline void setup_dev_of_flags(struct netif_port *port)
 {
-    port->flag |= NETIF_PORT_FLAG_ENABLED;
+    port->flags |= NETIF_PORT_FLAG_ENABLED;
 
     /* tx offload conf and flags */
     if (port->dev_info.tx_offload_capa & DEV_TX_OFFLOAD_IPV4_CKSUM)
-        port->flag |= NETIF_PORT_FLAG_TX_IP_CSUM_OFFLOAD;
+        port->offload |= NETIF_PORT_TX_IP_CSUM_OFFLOAD;
 
     if (port->dev_info.tx_offload_capa & DEV_TX_OFFLOAD_TCP_CKSUM)
-        port->flag |= NETIF_PORT_FLAG_TX_TCP_CSUM_OFFLOAD;
+        port->offload |= NETIF_PORT_TX_TCP_CSUM_OFFLOAD;
 
     if (port->dev_info.tx_offload_capa & DEV_TX_OFFLOAD_UDP_CKSUM)
-        port->flag |= NETIF_PORT_FLAG_TX_UDP_CSUM_OFFLOAD;
+        port->offload |= NETIF_PORT_TX_UDP_CSUM_OFFLOAD;
 
     /* FIXME: may be a bug in dev_info get for virtio device,
      *        set the txq_of_flags manually for this type device */
     if (strncmp(port->dev_info.driver_name, "net_virtio", strlen("net_virtio")) == 0) {
-        port->flag |= NETIF_PORT_FLAG_TX_IP_CSUM_OFFLOAD;
-        port->flag &= ~NETIF_PORT_FLAG_TX_TCP_CSUM_OFFLOAD;
-        port->flag &= ~NETIF_PORT_FLAG_TX_UDP_CSUM_OFFLOAD;
+        port->offload |= NETIF_PORT_TX_IP_CSUM_OFFLOAD;
+        port->offload &= ~NETIF_PORT_TX_TCP_CSUM_OFFLOAD;
+        port->offload &= ~NETIF_PORT_TX_UDP_CSUM_OFFLOAD;
     }
 
     /*
@@ -3161,10 +3698,13 @@ static inline void setup_dev_of_flags(struct netif_port *port)
      * while there's only one PVID (DEV_TX_OFFLOAD_VLAN_INSERT),
      * to make things easier, do not support TX VLAN instert offload.
      * or we have to check if VID is PVID (than to tx offload it).
+	     æˆ‘ä»¬å¯èƒ½åœ¨ä¸€ä¸ªrte_ethdevä¸Šæœ‰å¤šä¸ªvlan devï¼Œè€Œmbuf->vlan_tciæ˜¯RX !
+	     è™½ç„¶åªæœ‰ä¸€ä¸ªPVID (DEV_TX_OFFLOAD_VLAN_INSERT)ï¼Œä¸ºäº†æ–¹ä¾¿èµ·è§ï¼Œ
+	     ä¸æ”¯æŒTX VLANæ’å…¥å¸è½½ã€‚æˆ–è€…æˆ‘ä»¬å¿…é¡»æ£€æŸ¥VIDæ˜¯å¦ä¸ºPVID(æ¯”å‘é€å¸è½½å®ƒ)ã€‚
      */
 #if 0
     if (dev_info->tx_offload_capa & DEV_TX_OFFLOAD_VLAN_INSERT) {
-        port->flag |= NETIF_PORT_FLAG_TX_VLAN_INSERT_OFFLOAD;
+        port->flag |= NETIF_PORT_TX_VLAN_INSERT_OFFLOAD;
         port->dev_conf.txmode.hw_vlan_insert_pvid = 1;
         rte_eth_dev_set_vlan_pvid();
     }
@@ -3172,11 +3712,15 @@ static inline void setup_dev_of_flags(struct netif_port *port)
 
     /* rx offload conf and flags */
     if (port->dev_info.rx_offload_capa & DEV_RX_OFFLOAD_VLAN_STRIP) {
-        port->flag |= NETIF_PORT_FLAG_RX_VLAN_STRIP_OFFLOAD;
+        port->offload |= NETIF_PORT_RX_VLAN_STRIP_OFFLOAD;
         port->dev_conf.rxmode.offloads |= DEV_RX_OFFLOAD_VLAN_STRIP;
     }
     if (port->dev_info.rx_offload_capa & DEV_RX_OFFLOAD_IPV4_CKSUM)
-        port->flag |= NETIF_PORT_FLAG_RX_IP_CSUM_OFFLOAD;
+        port->offload |= NETIF_PORT_RX_IP_CSUM_OFFLOAD;
+
+	//å¦‚æžœè®¾å¤‡æ”¯æŒvlan filterï¼Œåˆ™è®¾ç½®æ ‡å¿—.
+	if (port->dev_info.rx_offload_capa & DEV_RX_OFFLOAD_VLAN_FILTER)
+		port->offload |= NETIF_PORT_RX_VLAN_FILTER_OFFLOAD;
 }
 
 /* TODO: refactor it with netif_alloc */
@@ -3217,15 +3761,16 @@ static struct netif_port* netif_rte_port_alloc(portid_t id, int nrxq,
     port->nrxq = nrxq; // update after port_rx_queues_get();
     port->ntxq = ntxq; // update after port_tx_queues_get();
     port->socket = rte_eth_dev_socket_id(id);
-    port->hw_header_len = sizeof(struct ether_hdr);
+    port->hw_header_len = sizeof(struct rte_ether_hdr);
     if (port->socket == SOCKET_ID_ANY)
         port->socket = rte_socket_id();
-    port->mbuf_pool = pktmbuf_pool[port->socket];
+    port->mbuf_pool = pktmbuf_pool[0][port->socket];
     rte_eth_macaddr_get((uint8_t)id, &port->addr);
     rte_eth_dev_get_mtu((uint8_t)id, &port->mtu);
     rte_eth_dev_info_get((uint8_t)id, &port->dev_info);
     port->dev_conf = *conf;
     rte_rwlock_init(&port->dev_lock);
+	INIT_LIST_HEAD(&port->upper_dev_list);
     netif_mc_init(port);
 
     setup_dev_of_flags(port);
@@ -3628,13 +4173,14 @@ static int add_bond_slaves(struct netif_port *port)
     }
 
     port->socket = rte_eth_dev_socket_id(port->id);
-    port->mbuf_pool = pktmbuf_pool[port->socket];
+    port->mbuf_pool = pktmbuf_pool[0][port->socket];
     port_mtu_set(port);
     rte_eth_dev_info_get(port->id, &port->dev_info);
 
     return EDPVS_OK;
 }
 
+#if 0
 /* flush FDIR filters for all physical dpdk ports */
 static int fdir_filter_flush(const struct netif_port *port)
 {
@@ -3645,7 +4191,7 @@ static int fdir_filter_flush(const struct netif_port *port)
         return EDPVS_DPDKAPIFAIL;
     return EDPVS_OK;
 }
-
+#endif
 /*
  * Note: Invoke the function after port is allocated and lcores are configured.
  */
@@ -3681,11 +4227,11 @@ int netif_port_start(struct netif_port *port)
     if ((ret = netif_port_fdir_dstport_mask_set(port)) != EDPVS_OK)
         return ret;
 
-    if (port->flag & NETIF_PORT_FLAG_TX_IP_CSUM_OFFLOAD)
+    if (port->offload & NETIF_PORT_TX_IP_CSUM_OFFLOAD)
         port->dev_conf.txmode.offloads |= DEV_TX_OFFLOAD_IPV4_CKSUM;
-    if (port->flag & NETIF_PORT_FLAG_TX_UDP_CSUM_OFFLOAD)
+    if (port->offload & NETIF_PORT_TX_UDP_CSUM_OFFLOAD)
         port->dev_conf.txmode.offloads |= DEV_TX_OFFLOAD_UDP_CKSUM;
-    if (port->flag & NETIF_PORT_FLAG_TX_TCP_CSUM_OFFLOAD)
+    if (port->offload & NETIF_PORT_TX_TCP_CSUM_OFFLOAD)
         port->dev_conf.txmode.offloads |= DEV_TX_OFFLOAD_TCP_CKSUM;
     port->dev_conf.txmode.offloads |= DEV_TX_OFFLOAD_MBUF_FAST_FREE;
     adapt_device_conf(port->id, &port->dev_conf.rx_adv_conf.rss_conf.rss_hf,
@@ -3701,7 +4247,7 @@ int netif_port_start(struct netif_port *port)
     if (port->nrxq > 0) {
         for (qid = 0; qid < port->nrxq; qid++) {
             ret = rte_eth_rx_queue_setup(port->id, qid, port->rxq_desc_nb,
-                    port->socket, NULL, pktmbuf_pool[port->socket]);
+                    port->socket, NULL, pktmbuf_pool[0][port->socket]);
             if (ret < 0) {
                 RTE_LOG(ERR, NETIF, "%s: fail to config %s:rx-queue-%d\n",
                         __func__, port->name, qid);
@@ -3716,9 +4262,9 @@ int netif_port_start(struct netif_port *port)
             memcpy(&txconf, &port->dev_info.default_txconf, sizeof(struct rte_eth_txconf));
 #if RTE_VERSION < RTE_VERSION_NUM(18, 11, 0, 0)
             if (port->dev_conf.rxmode.jumbo_frame
-                    || (port->flag & NETIF_PORT_FLAG_TX_IP_CSUM_OFFLOAD)
-                    || (port->flag & NETIF_PORT_FLAG_TX_UDP_CSUM_OFFLOAD)
-                    || (port->flag & NETIF_PORT_FLAG_TX_TCP_CSUM_OFFLOAD))
+                    || (port->offload & NETIF_PORT_TX_IP_CSUM_OFFLOAD)
+                    || (port->offload & NETIF_PORT_TX_UDP_CSUM_OFFLOAD)
+                    || (port->offload & NETIF_PORT_TX_TCP_CSUM_OFFLOAD))
                 txconf.txq_flags = 0;
 #endif
             txconf.offloads = port->dev_conf.txmode.offloads;
@@ -3770,7 +4316,7 @@ int netif_port_start(struct netif_port *port)
         return EDPVS_DPDKAPIFAIL;
     }
 
-    port->flag |= NETIF_PORT_FLAG_RUNNING;
+    port->flags |= NETIF_PORT_FLAG_RUNNING;
 
     // enable promicuous mode if configured
     if (promisc_on) {
@@ -3794,13 +4340,13 @@ int netif_port_start(struct netif_port *port)
         }
     }
 
-    /* flush FDIR filters */
+    /* flush FDIR filters *
     ret = fdir_filter_flush(port);
     if (ret != EDPVS_OK) {
         RTE_LOG(WARNING, NETIF, "fail to flush FDIR filters for device %s\n", port->name);
         return ret;
     }
-
+	*/
     return EDPVS_OK;
 }
 
@@ -3821,7 +4367,7 @@ int netif_port_stop(struct netif_port *port)
         return EDPVS_DPDKAPIFAIL;
     }
 
-    port->flag |= NETIF_PORT_FLAG_STOPPED;
+    port->flags |= NETIF_PORT_FLAG_STOPPED;
     return EDPVS_OK;
 }
 
@@ -3956,7 +4502,7 @@ static int relate_bonding_device(void)
 static struct rte_eth_conf default_port_conf = {
     .rxmode = {
         .mq_mode        = ETH_MQ_RX_RSS,
-        .max_rx_pkt_len = ETHER_MAX_LEN,
+        .max_rx_pkt_len = RTE_ETHER_MAX_LEN,
         .split_hdr_size = 0,
         .offloads = DEV_RX_OFFLOAD_IPV4_CKSUM,
     },
@@ -4260,7 +4806,7 @@ int netif_vdevs_add(void)
 
 int netif_init(void)
 {
-    netif_pktmbuf_pool_init();
+	netif_pktmbuf_pool_init();
     netif_arp_ring_init();
     netif_pkt_type_tab_init();
     netif_port_init();
@@ -4536,7 +5082,7 @@ static int get_port_basic(struct netif_port *port, void **out, size_t *out_len)
     strncpy(get->name, port->name, sizeof(get->name));
     get->nrxq = port->nrxq;
     get->ntxq = port->ntxq;
-    ether_format_addr(get->addr, sizeof(get->addr), &port->addr);
+    rte_ether_format_addr(get->addr, sizeof(get->addr), &port->addr);
 
     get->socket_id = port->socket;
     get->mtu = port->mtu;
@@ -4577,19 +5123,19 @@ static int get_port_basic(struct netif_port *port, void **out, size_t *out_len)
     }
     get->promisc = promisc ? 1 : 0;
 
-    if (port->flag & NETIF_PORT_FLAG_FORWARD2KNI)
+    if (port->flags & NETIF_PORT_FLAG_FORWARD2KNI)
         get->fwd2kni = 1;
-    if (port->flag & NETIF_PORT_FLAG_TC_EGRESS)
+    if (port->flags & NETIF_PORT_FLAG_TC_EGRESS)
         get->tc_egress= 1;
-    if (port->flag & NETIF_PORT_FLAG_TC_INGRESS)
+    if (port->flags & NETIF_PORT_FLAG_TC_INGRESS)
         get->tc_ingress = 1;
-    if (port->flag & NETIF_PORT_FLAG_RX_IP_CSUM_OFFLOAD)
+    if (port->offload & NETIF_PORT_RX_IP_CSUM_OFFLOAD)
         get->ol_rx_ip_csum = 1;
-    if (port->flag & NETIF_PORT_FLAG_TX_IP_CSUM_OFFLOAD)
+    if (port->offload & NETIF_PORT_TX_IP_CSUM_OFFLOAD)
         get->ol_tx_ip_csum = 1;
-    if (port->flag & NETIF_PORT_FLAG_TX_TCP_CSUM_OFFLOAD)
+    if (port->offload & NETIF_PORT_TX_TCP_CSUM_OFFLOAD)
         get->ol_tx_tcp_csum = 1;
-    if (port->flag & NETIF_PORT_FLAG_TX_UDP_CSUM_OFFLOAD)
+    if (port->offload & NETIF_PORT_TX_UDP_CSUM_OFFLOAD)
         get->ol_tx_udp_csum = 1;
 
     *out = get;
@@ -4809,10 +5355,10 @@ static int get_bond_status(struct netif_port *port, void **out, size_t *out_len)
             get->slaves[i].is_active = 1;
         if (slaves[i] == primary)
             get->slaves[i].is_primary = 1;
-        ether_format_addr(&get->slaves[i].macaddr[0], sizeof(get->slaves[i].macaddr) - 1, &sport->addr);
+        rte_ether_format_addr(&get->slaves[i].macaddr[0], sizeof(get->slaves[i].macaddr) - 1, &sport->addr);
     }
 
-    ether_format_addr(get->macaddr, sizeof(get->macaddr), &mport->addr);
+    rte_ether_format_addr(get->macaddr, sizeof(get->macaddr), &mport->addr);
 
     xmit_policy = rte_eth_bond_xmit_policy_get(port->id);
     switch (xmit_policy) {
@@ -4933,7 +5479,7 @@ static int set_lcore(const netif_lcore_set_t *lcore_cfg)
 
 static int set_port(struct netif_port *port, const netif_nic_set_t *port_cfg)
 {
-    struct ether_addr ea;
+    struct rte_ether_addr ea;
     assert(port_cfg);
 
     if (port_cfg->promisc_on) {
@@ -4951,11 +5497,11 @@ static int set_port(struct netif_port *port, const netif_nic_set_t *port_cfg)
     }
 
     if (port_cfg->forward2kni_on) {
-        port->flag |= NETIF_PORT_FLAG_FORWARD2KNI;
+        port->flags |= NETIF_PORT_FLAG_FORWARD2KNI;
         RTE_LOG(INFO, NETIF, "[%s] forward2kni mode for %s enabled\n",
             __func__, port_cfg->pname);
     } else if (port_cfg->forward2kni_off) {
-        port->flag &= ~(NETIF_PORT_FLAG_FORWARD2KNI);
+        port->flags &= ~(NETIF_PORT_FLAG_FORWARD2KNI);
         RTE_LOG(INFO, NETIF, "[%s] forward2kni mode for %s disabled\n",
             __func__, port_cfg->pname);
     }
@@ -4996,7 +5542,7 @@ static int set_port(struct netif_port *port, const netif_nic_set_t *port_cfg)
             (unsigned *)&ea.addr_bytes[3],
             (unsigned *)&ea.addr_bytes[4],
             (unsigned *)&ea.addr_bytes[5]);
-    if (is_valid_assigned_ether_addr(&ea)) {
+    if (rte_is_valid_assigned_ether_addr(&ea)) {
         if (port->type == PORT_TYPE_BOND_MASTER) {
             if (rte_eth_bond_mac_address_set(port->id, &ea) < 0) {
                 RTE_LOG(WARNING, NETIF, "fail to set %s's macaddr to be %s\n",
@@ -5020,14 +5566,14 @@ static int set_port(struct netif_port *port, const netif_nic_set_t *port_cfg)
     }
 
     if (port_cfg->tc_egress_on)
-        port->flag |= NETIF_PORT_FLAG_TC_EGRESS;
+        port->flags |= NETIF_PORT_FLAG_TC_EGRESS;
     else if (port_cfg->tc_egress_off)
-        port->flag &= (~NETIF_PORT_FLAG_TC_EGRESS);
+        port->flags &= (~NETIF_PORT_FLAG_TC_EGRESS);
 
     if (port_cfg->tc_ingress_on)
-        port->flag |= NETIF_PORT_FLAG_TC_INGRESS;
+        port->flags |= NETIF_PORT_FLAG_TC_INGRESS;
     else if (port_cfg->tc_ingress_off)
-        port->flag &= (~NETIF_PORT_FLAG_TC_INGRESS);
+        port->flags &= (~NETIF_PORT_FLAG_TC_INGRESS);
 
     return EDPVS_OK;
 }
@@ -5199,10 +5745,20 @@ struct dpvs_sockopts netif_sockopt = {
     .set = netif_sockopt_set,
 };
 
+int interface_status = 0;
+int *interface_blob = NULL;
+
 static int
 set_interface_cli(cmd_blk_t *cbt)
 {
 	int i;
+    interface_status++;
+    if (!interface_blob) {
+        interface_blob = rte_malloc(NULL, sizeof(int), 0);
+    } 
+    if (!interface_blob) {
+        *interface_blob = interface_status;
+    }
 	tyflow_cmdline_printf(cbt->cl, "number cnt: %d\n", cbt->number_cnt);
 	for (i=0; i<cbt->number_cnt; i++) {
 		tyflow_cmdline_printf(cbt->cl, "\t%d: %d\n", i, cbt->number[i]);

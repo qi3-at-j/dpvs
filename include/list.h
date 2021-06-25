@@ -24,6 +24,7 @@
 #include <linux/stddef.h>
 #include <linux/const.h>
 #include <linux/kernel.h>
+#include <rte_atomic.h>
 
 struct list_head {
         struct list_head *next, *prev;
@@ -152,6 +153,12 @@ extern void __list_del_entry(struct list_head *entry);
 extern void list_del(struct list_head *entry);
 #endif
 
+static inline void list_del_rcu(struct list_head *entry)
+{
+	__list_del(entry->prev, entry->next);
+	entry->prev = LIST_POISON2;
+}
+
 #ifdef CONFIG_DEBUG_LIST
 /*
  * See devm_memremap_pages() which wants DEBUG_LIST=y to assert if one
@@ -250,6 +257,27 @@ static inline int list_elems(const struct list_head *head)
     for (node = (head)->next; node != (head); node = node->next)
         ++nb;
     return nb;
+}
+
+static inline void __list_add_rcu(struct list_head * new,
+		struct list_head * prev, struct list_head * next)
+{
+	new->next = next;
+	new->prev = prev;
+	rte_smp_wmb();
+	next->prev = new;
+	prev->next = new;
+}
+
+static inline void list_add_rcu(struct list_head *new, struct list_head *head)
+{
+	__list_add_rcu(new, head, head->next);
+}
+
+static inline void list_add_tail_rcu(struct list_head *new,
+					struct list_head *head)
+{
+	__list_add_rcu(new, head->prev, head);
 }
 
 /**

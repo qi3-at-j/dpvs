@@ -50,17 +50,71 @@
 #define NEIGH_TAB_SIZE (1 << NEIGH_TAB_BITS)
 #define NEIGH_TAB_MASK (NEIGH_TAB_SIZE - 1)
 
+/*
+ *	Neighbor Cache Entry Flags
+ */
+
+#define NTF_USE		0x01
+#define NTF_PROXY	0x08	/* == ATF_PUBL */
+#define NTF_ROUTER	0x80
+
+#define NTF_SELF	0x02
+#define NTF_MASTER	0x04
+
+/*
+ *	Neighbor Cache Entry States.
+ */
+
+#define NUD_INCOMPLETE	0x01
+#define NUD_REACHABLE	0x02
+#define NUD_STALE	0x04
+#define NUD_DELAY	0x08
+#define NUD_PROBE	0x10
+#define NUD_FAILED	0x20
+
+/* Dummy states */
+#define NUD_NOARP	0x40
+#define NUD_PERMANENT	0x80
+#define NUD_NONE	0x00
+
+
+struct dpvs_ndmsg {
+	__u8		ndm_family;
+	__u8		ndm_pad1;
+	__u16		ndm_pad2;
+	__s32		ndm_ifindex;
+	__u16		ndm_state;
+	__u8		ndm_flags;
+	__u8		ndm_type;
+};
+
+
+/*
+enum {
+	NDA_UNSPEC,
+	NDA_DST,
+	NDA_LLADDR,
+	NDA_CACHEINFO,
+	NDA_PROBES,
+	NDA_VLAN,
+	NDA_PORT,
+	NDA_VNI,
+	NDA_IFINDEX,
+	__NDA_MAX
+};
+*/
 struct neighbour_entry {
     int                 af;
     struct list_head    neigh_list;
     union inet_addr     ip_addr;
-    struct ether_addr   eth_addr;
+    struct rte_ether_addr   eth_addr;
     struct netif_port   *port;
     struct dpvs_timer   timer;
     struct list_head    queue_list;
     uint32_t            que_num;
     uint32_t            state;
     uint32_t            ts;
+    rte_atomic32_t      refcnt;
     uint8_t             flag;
 } __rte_cache_aligned;
 
@@ -89,7 +143,7 @@ struct neighbour_entry *neigh_lookup_entry(int af, const union inet_addr *key,
 void neigh_send_mbuf_cach(struct neighbour_entry *neighbour);
 
 int neigh_edit(struct neighbour_entry *neighbour,
-               struct ether_addr *eth_addr);
+               struct rte_ether_addr *eth_addr);
 
 int neigh_init(void);
 
@@ -105,7 +159,7 @@ int neigh_output(int af,
                  struct netif_port *port);
 
 struct neighbour_entry *neigh_add_table(int af, const union inet_addr *ipaddr,
-                                        const struct ether_addr *eth_addr,
+                                        const struct rte_ether_addr *eth_addr,
                                         struct netif_port *port,
                                         unsigned int hashkey, int flag);
 
@@ -118,7 +172,7 @@ void neigh_confirm(int af, union inet_addr *nexthop, struct netif_port *port);
 int neigh_sync_core(const void *param, bool add_del, enum param_kind kind);
 
 static inline void ipv6_mac_mult(const struct in6_addr *mult_target,
-                                 struct ether_addr *mult_eth)
+                                 struct rte_ether_addr *mult_eth)
 {
     uint8_t *w = (uint8_t *)mult_eth;
     w[0] = 0x33;

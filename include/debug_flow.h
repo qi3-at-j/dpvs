@@ -18,11 +18,21 @@ extern uint32_t flow_debug_flag;
             debug_trace(fmt, ##arg);        \
     }while(0)
 
+#define flow_debug_trace_no_flag(fmt, arg...) \
+    do {                                      \
+        debug_trace(fmt, ##arg);              \
+    }while(0)
+
 #define flow_debug_packet(mac, mbuf)  \
     do {                                         \
         if (flow_debug_flag & FLOW_DEBUG_PACKET) \
             mac?debug_trace_packet_mac(mbuf):debug_trace_packet_ip(mbuf); \
     }while(0)
+
+#define flow_print(fmt, arg...)              \
+    if (ffilter_show_this_pak > 0) {         \
+        flow_debug_trace_no_flag(fmt, ##arg) \
+    }
 
 extern void
 debug_flow_init(void);

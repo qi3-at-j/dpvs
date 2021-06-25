@@ -196,14 +196,15 @@ static struct netif_port *tunnel_create(struct ip_tunnel_tab *tab,
     dev->hw_header_len = 0; /* no l2 header or tunnel,
                                set before tunnel_bind_dev */
     if (tnl->link) {
-        dev->flag |= tnl->link->flag;
-        ether_addr_copy(&tnl->link->addr, &dev->addr);
+        dev->flags |= tnl->link->flags;
+		dev->offload |= tnl->link->offload;
+        rte_ether_addr_copy(&tnl->link->addr, &dev->addr);
     }
-    dev->flag |= NETIF_PORT_FLAG_RUNNING; /* XXX */
-    dev->flag |= NETIF_PORT_FLAG_NO_ARP;
-    dev->flag &= ~NETIF_PORT_FLAG_TX_IP_CSUM_OFFLOAD;
-    dev->flag &= ~NETIF_PORT_FLAG_TX_TCP_CSUM_OFFLOAD;
-    dev->flag &= ~NETIF_PORT_FLAG_TX_UDP_CSUM_OFFLOAD;
+    dev->flags |= NETIF_PORT_FLAG_RUNNING; /* XXX */
+    dev->flags |= NETIF_PORT_FLAG_NO_ARP;
+    dev->offload &= ~NETIF_PORT_TX_IP_CSUM_OFFLOAD;
+    dev->offload &= ~NETIF_PORT_TX_TCP_CSUM_OFFLOAD;
+    dev->offload &= ~NETIF_PORT_TX_UDP_CSUM_OFFLOAD;
 
     err = netif_port_register(dev);
     if (err != EDPVS_OK) {
@@ -333,7 +334,7 @@ static int tunnel_update_pmtu(struct netif_port *dev, struct rte_mbuf *mbuf,
     else
         mtu = rt->mtu ? : dev->mtu;
 
-    if (mbuf->packet_type == ETHER_TYPE_IPv4) {
+    if (mbuf->packet_type == RTE_ETHER_TYPE_IPV4) {
         if ((iiph->frag_off & htons(IP_DF)) && mtu < pkt_size) {
             icmp_send(mbuf, ICMP_DEST_UNREACH, ICMP_FRAG_NEEDED, htonl(mtu));
             return EDPVS_FRAG;
@@ -362,7 +363,7 @@ static int tunnel_xmit(struct rte_mbuf *mbuf, __be32 src, __be32 dst,
     oiph->daddr     = dst;
     oiph->saddr     = src;
     oiph->ttl       = ttl;
-    oiph->id        = ip4_select_id((struct ipv4_hdr *)oiph);
+    oiph->id        = ip4_select_id((struct rte_ipv4_hdr *)oiph);
 
     return ipv4_local_out(mbuf);
 }
@@ -687,7 +688,7 @@ struct ip_tunnel *ip_tunnel_lookup(struct ip_tunnel_tab *tab,
     hlist_for_each_entry(tnl, head, hlist) {
         if (local != tnl->params.iph.saddr ||
             remote != tnl->params.iph.daddr ||
-            !(tnl->dev->flag & NETIF_PORT_FLAG_RUNNING))
+            !(tnl->dev->flags & NETIF_PORT_FLAG_RUNNING))
             continue;
 
         if (!tunnel_key_match(&tnl->params, flags, key))
@@ -702,7 +703,7 @@ struct ip_tunnel *ip_tunnel_lookup(struct ip_tunnel_tab *tab,
     hlist_for_each_entry(tnl, head, hlist) {
         if (remote != tnl->params.iph.daddr ||
             tnl->params.iph.saddr != 0 ||
-            !(tnl->dev->flag & NETIF_PORT_FLAG_RUNNING))
+            !(tnl->dev->flags & NETIF_PORT_FLAG_RUNNING))
             continue;
 
         if (!tunnel_key_match(&tnl->params, flags, key))
@@ -721,7 +722,7 @@ struct ip_tunnel *ip_tunnel_lookup(struct ip_tunnel_tab *tab,
             (local != tnl->params.iph.daddr || !IN_MULTICAST(local)))
             continue;
 
-        if (!(tnl->dev->flag & NETIF_PORT_FLAG_RUNNING))
+        if (!(tnl->dev->flags & NETIF_PORT_FLAG_RUNNING))
             continue;
 
         if (!tunnel_key_match(&tnl->params, flags, key))
@@ -740,7 +741,7 @@ struct ip_tunnel *ip_tunnel_lookup(struct ip_tunnel_tab *tab,
         if (tnl->params.i_key != key ||
             tnl->params.iph.saddr != 0 ||
             tnl->params.iph.daddr != 0 ||
-            !(tnl->dev->flag & NETIF_PORT_FLAG_RUNNING))
+            !(tnl->dev->flags & NETIF_PORT_FLAG_RUNNING))
             continue;
 
         if (tunnel_link_match(tnl, link))
@@ -754,7 +755,7 @@ skip_key_lookup:
         return cand;
 
     if (tab->fb_tunnel_dev &&
-        tab->fb_tunnel_dev->flag & NETIF_PORT_FLAG_RUNNING)
+        tab->fb_tunnel_dev->flags & NETIF_PORT_FLAG_RUNNING)
         return netif_priv(tab->fb_tunnel_dev);
 
     return NULL;
@@ -805,7 +806,7 @@ int ip_tunnel_xmit(struct rte_mbuf *mbuf, struct netif_port *dev,
 
     assert(mbuf && dev && tiph);
 
-    if (mbuf->packet_type == ETHER_TYPE_IPv4)
+    if (mbuf->packet_type == RTE_ETHER_TYPE_IPV4)
         iiph = rte_pktmbuf_mtod_offset(mbuf, struct iphdr *, tnl->hlen);
 
     connected = tiph->daddr != 0;
@@ -852,7 +853,7 @@ int ip_tunnel_xmit(struct rte_mbuf *mbuf, struct netif_port *dev,
 
     /* refer route in mbuf and this reference will be put later. */
     route4_get(rt);
-    mbuf->userdata = (void *)rt;
+    mbuf_userdata_set(mbuf, (void *)rt);
 
     err = tunnel_update_pmtu(dev, mbuf, rt, tiph->frag_off, iiph);
     if (err != EDPVS_OK)

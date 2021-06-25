@@ -34,7 +34,7 @@ struct icmp_ctrl {
 #ifdef CONFIG_DPVS_ICMP_DEBUG
 static void icmp_dump_hdr(const struct rte_mbuf *mbuf)
 {
-    struct icmp_hdr *ich = rte_pktmbuf_mtod(mbuf, struct icmp_hdr *);
+    struct rte_icmp_hdr *ich = rte_pktmbuf_mtod(mbuf, struct rte_icmp_hdr *);
     lcoreid_t lcore = rte_lcore_id();
 
     fprintf(stderr, "lcore %d port %d icmp type %u code %u id %u seq %u\n",
@@ -47,12 +47,12 @@ static void icmp_dump_hdr(const struct rte_mbuf *mbuf)
 
 static int icmp_echo(struct rte_mbuf *mbuf)
 {
-    struct ipv4_hdr *iph = mbuf->userdata;
-    struct icmp_hdr *ich = rte_pktmbuf_mtod(mbuf, struct icmp_hdr *);
+    struct rte_ipv4_hdr *iph = mbuf_userdata_get(mbuf);
+    struct rte_icmp_hdr *ich = rte_pktmbuf_mtod(mbuf, struct rte_icmp_hdr *);
     uint16_t csum;
     struct flow4 fl4;
 
-    if (ich->icmp_type != IP_ICMP_ECHO_REQUEST || ich->icmp_code != 0) {
+    if (ich->icmp_type != RTE_IP_ICMP_ECHO_REQUEST || ich->icmp_code != 0) {
         RTE_LOG(WARNING, ICMP, "%s: not echo-request\n", __func__);
         goto errout;
     }
@@ -74,7 +74,7 @@ static int icmp_echo(struct rte_mbuf *mbuf)
         goto errout;
     }
 
-    ich->icmp_type = IP_ICMP_ECHO_REPLY;
+    ich->icmp_type = RTE_IP_ICMP_ECHO_REPLY;
     /* recalc the checksum */
     ich->icmp_cksum = 0;
     csum = rte_raw_cksum(ich, mbuf->pkt_len);
@@ -159,8 +159,8 @@ static struct icmp_ctrl icmp_ctrls[MAX_ICMP_CTRL] = {
 /* @imbuf is input (original) IP packet to trigger ICMP. */
 void icmp_send(struct rte_mbuf *imbuf, int type, int code, uint32_t info)
 {
-    struct route_entry *rt = imbuf->userdata;
-    struct ipv4_hdr *iph = ip4_hdr(imbuf);
+    struct route_entry *rt = mbuf_userdata_get(imbuf);
+    struct rte_ipv4_hdr *iph = ip4_hdr(imbuf);
     eth_type_t etype = imbuf->packet_type; /* FIXME: use other field ? */
     struct in_addr saddr;
     uint8_t tos;
@@ -191,7 +191,7 @@ void icmp_send(struct rte_mbuf *imbuf, int type, int code, uint32_t info)
     }
 
     /* reply only first fragment. */
-    if (iph->fragment_offset & htons(IPV4_HDR_OFFSET_MASK))
+    if (iph->fragment_offset & htons(RTE_IPV4_HDR_OFFSET_MASK))
         return;
 
     if (type > NR_ICMP_TYPES)
@@ -244,7 +244,7 @@ void icmp_send(struct rte_mbuf *imbuf, int type, int code, uint32_t info)
         RTE_LOG(DEBUG, ICMP, "%s: no memory.\n", __func__);
         return;
     }
-    mbuf->userdata = NULL;
+    mbuf_userdata_set(mbuf, NULL);
     assert(rte_pktmbuf_headroom(mbuf) >= 128); /* for L2/L3 */
 
     /* prepare ICMP message */
@@ -260,7 +260,7 @@ void icmp_send(struct rte_mbuf *imbuf, int type, int code, uint32_t info)
 
     /* copy as much as we can without exceeding 576 (min-MTU) */
     room = fl4.fl4_oif->mtu > 576 ? 576 : fl4.fl4_oif->mtu;
-    room -= sizeof(struct ipv4_hdr);
+    room -= sizeof(struct rte_ipv4_hdr);
     room -= sizeof(struct icmphdr);
 
     /* we support only linear mbuf now, use m.data_len
@@ -286,13 +286,13 @@ void icmp_send(struct rte_mbuf *imbuf, int type, int code, uint32_t info)
 
 static int icmp_rcv(struct rte_mbuf *mbuf)
 {
-    struct ipv4_hdr *iph = mbuf->userdata;
-    struct icmp_hdr *ich;
+    struct rte_ipv4_hdr *iph = mbuf_userdata_get(mbuf);
+    struct rte_icmp_hdr *ich;
     struct icmp_ctrl *ctrl;
 
-    if (mbuf_may_pull(mbuf, sizeof(struct icmp_hdr)) != 0)
+    if (mbuf_may_pull(mbuf, sizeof(struct rte_icmp_hdr)) != 0)
         goto invpkt;
-    ich = rte_pktmbuf_mtod(mbuf, struct icmp_hdr *);
+    ich = rte_pktmbuf_mtod(mbuf, struct rte_icmp_hdr *);
 
     if (unlikely(!iph)) {
         RTE_LOG(WARNING, ICMP, "%s: no ipv4 header\n", __func__);

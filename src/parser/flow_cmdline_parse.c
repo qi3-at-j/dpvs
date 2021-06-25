@@ -106,11 +106,15 @@ match_node(cmd_node_t *node, const char *buf,
 	int len = 0, str_len, quote;
 	uint32_t uint_value;
 	char c;
+    /* change to struct in6_addr later */
+    char tmp[INET_ADDRSTRLEN];
+    char ipv4[sizeof(struct in_addr)];
 	if (!node || !buf || !cmd_blk)
 		return -1;
 
 	if (node->type == CMD_NODE_TYPE_STR ||
         node->type == CMD_NODE_TYPE_NUM ||
+        node->type == CMD_NODE_TYPE_IPV4 ||
         node->type == CMD_NODE_TYPE_NONE ||
 		node->type == CMD_NODE_TYPE_EOL) {
 		rc = 0;
@@ -141,20 +145,28 @@ parse_it:
 						break;
 					case CMD_KW_TYPE_SET:
 					case CMD_KW_TYPE_DEBUG:
-                        if (!strcmp(token, "set") || !strcmp(token, "debug"))
+                    case CMD_KW_TYPE_CREATE:
+                        if (!strcmp(token, "set") ||
+                            !strcmp(token, "debug") ||
+                            !strcmp(token, "create"))
                             cmd_blk->mode = MODE_DO;
                         break;
                     case CMD_KW_TYPE_UNSET:
                     case CMD_KW_TYPE_UNDEB:
-                        if (!strcmp(token, "unset") || !strcmp(token, "undebug"))
+                    case CMD_KW_TYPE_DELETE:
+                        if (!strcmp(token, "unset") ||
+                            !strcmp(token, "undebug") ||
+                            !strcmp(token, "delete"))
                             cmd_blk->mode = MODE_UNDO;
                         break;
+                    case CMD_KW_TYPE_MOVE:
 					default:
 						break;
 				}
 				rc = len;
 				break;
 			case CMD_NODE_TYPE_STR:
+			case CMD_NODE_TYPE_IPV4:
 				str_len = 0;
                 /* string type need to support "xxx yyy" */
                 quote = (buf[0]=='"')?1:0;
@@ -167,9 +179,22 @@ parse_it:
 				}
                 if (!str_len && !partial)
                     return -1;
-				cmd_blk->string_cnt++;
-				strncpy(cmd_blk->string[node->index-1], buf, str_len);
-				rc = str_len;
+                if (node->type == CMD_NODE_TYPE_STR) {
+                    cmd_blk->string_cnt++;
+                    strncpy(cmd_blk->string[node->index-1], buf, str_len);
+                    rc = str_len;
+                } else if (node->type == CMD_NODE_TYPE_IPV4) {
+                    if (str_len >= INET_ADDRSTRLEN)
+                        return -1;
+                    strncpy(tmp, buf, str_len);
+                    tmp[str_len] = '\0';
+                    rc = inet_pton(AF_INET, tmp, ipv4);
+                    if (rc <= 0) {
+                        return -1;
+                    }
+                    cmd_blk->ipv4_cnt++;
+                    cmd_blk->ipv4[node->index-1] = htonl(*((uint32_t *)ipv4));
+                }
 				break;
 			case CMD_NODE_TYPE_NUM:
 				uint_value = 0;
@@ -572,6 +597,8 @@ cmd_node_t *last_set_cmd = NULL;
 cmd_node_t *last_get_cmd = NULL;
 cmd_node_t *last_clear_cmd = NULL;
 cmd_node_t *last_debug_cmd = NULL;
+cmd_node_t *last_create_cmd = NULL;
+cmd_node_t *last_move_cmd = NULL;
 
 KW_NODE(set, none, none, "set", "configure system parameters");
 KW_NODE_UNSET(unset, none, none, "unset", "unconfigure system parameters");
@@ -579,6 +606,9 @@ KW_NODE(get, none, none, "show", "show system infomation");
 KW_NODE(clear, none, none, "clear", "clear system statistic/trace/message/log/etc");
 KW_NODE_DEBUG(debug, none, none, "debug", "debug system modules");
 KW_NODE_UNDEB(undebug, none, none, "undebug", "undebug system modules");
+KW_NODE_CREATE(create, none, none, "create", "create system configure");
+KW_NODE_DELETE(delete, none, none, "delete", "delete system configure");
+KW_NODE_MOVE(move, none, none, "move", "move system configure");
 
 static void
 add_cmd(cmd_node_t *node, cmd_node_t **last, cmd_node_t *top)
@@ -621,6 +651,18 @@ add_debug_cmd(cmd_node_t *node)
 	add_cmd(node, &last_debug_cmd, &cnode(debug));
 }
 
+void
+add_create_cmd(cmd_node_t *node)
+{
+	add_cmd(node, &last_create_cmd, &cnode(create));
+}
+
+void
+add_move_cmd(cmd_node_t *node)
+{
+	add_cmd(node, &last_move_cmd, &cnode(move));
+}
+
 static void
 cmd_dup_child(cmd_node_t *dst, cmd_node_t *src)
 {
@@ -647,5 +689,11 @@ cmd_init(void)
     cmd_dup_child(&cnode(undebug), &cnode(debug));
 
     cmd_batch_init();
+
+    add_top_cmd(&cnode(create));
+    add_top_cmd(&cnode(delete));
+    cmd_dup_child(&cnode(delete), &cnode(create));
+
+    add_top_cmd(&cnode(move));
 }
 

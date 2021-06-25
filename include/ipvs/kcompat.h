@@ -37,6 +37,10 @@
 #define BITS_TO_LONGS(nr)   DIV_ROUND_UP(nr, BITS_PER_TYPE(long))
 #endif
 
+#ifndef BITOP_WORD
+#define BITOP_WORD(nr)		((nr) / __BITS_PER_LONG)
+#endif
+
 /**
  * taken from definition in include/linux/kernel.h
  *
@@ -55,6 +59,10 @@
  */
 inline unsigned long __ffs(unsigned long word);
 
+#ifndef ffz
+#define ffz(x)  __ffs(~(x))
+#endif
+
 /**
  * fls - find last (most-significant) bit set
  * @x: the word to search
@@ -62,7 +70,7 @@ inline unsigned long __ffs(unsigned long word);
  * This is defined the same way as ffs.
  * Note fls(0) = 0, fls(1) = 1, fls(0x80000000) = 32.
  */
-inline int fls(unsigned int x);
+inline int ffls(unsigned int x);
 
 /**
  * taken from definition in include/linux/gcd.h
@@ -86,7 +94,8 @@ unsigned long gcd(unsigned long a, unsigned long b) __attribute__((const));
  * If it's called on the same region of memory simultaneously, the effect
  * may be that only one operation succeeds.
  */
-static inline void __set_bit(int nr, volatile unsigned long *addr)
+static inline void
+__set_bit(int nr, volatile unsigned long *addr)
 {
     unsigned long mask = BIT_MASK(nr);
     unsigned long *p = ((unsigned long *)addr) + BIT_WORD(nr);
@@ -101,10 +110,175 @@ static inline void __set_bit(int nr, volatile unsigned long *addr)
  * @nr: bit number to test
  * @addr: Address to start counting from
  */
-static inline int test_bit(int nr, const unsigned long *addr)
+static inline int 
+test_bit(int nr, const unsigned long *addr)
 {
     return 1UL & (addr[BIT_WORD(nr)] >> (nr & (__BITS_PER_LONG - 1)));
 }
+
+static inline void
+clear_bit(unsigned long nr, void *addr)
+{
+	int *m = ((int *)addr) + (nr >> 5);
+	*m &= ~(1 << (nr & 31));
+}
+
+#ifndef find_next_zero_bit
+/*
+ * This implementation of find_{first,next}_zero_bit was stolen from
+ * Linus' asm-alpha/bitops.h.
+ */
+static inline unsigned long find_next_zero_bit(const unsigned long *addr, unsigned long size,
+				 unsigned long offset)
+{
+	const unsigned long *p = addr + BITOP_WORD(offset);
+	unsigned long result = offset & ~(__BITS_PER_LONG-1);
+	unsigned long tmp;
+
+	if (offset >= size)
+		return size;
+	size -= result;
+	offset %= __BITS_PER_LONG;
+	if (offset) {
+		tmp = *(p++);
+		tmp |= ~0UL >> (__BITS_PER_LONG - offset);
+		if (size < __BITS_PER_LONG)
+			goto found_first;
+		if (~tmp)
+			goto found_middle;
+		size -= __BITS_PER_LONG;
+		result += __BITS_PER_LONG;
+	}
+	while (size & ~(__BITS_PER_LONG-1)) {
+		if (~(tmp = *(p++)))
+			goto found_middle;
+		result += __BITS_PER_LONG;
+		size -= __BITS_PER_LONG;
+	}
+	if (!size)
+		return result;
+	tmp = *p;
+
+found_first:
+	tmp |= ~0UL << size;
+	if (tmp == ~0UL)	/* Are any bits zero? */
+		return result + size;	/* Nope. */
+found_middle:
+	return result + ffz(tmp);
+}
+#endif
+
+#define find_first_zero_bit(addr, size) find_next_zero_bit((addr), (size), 0)
+
+#define find_first_bit(addr, size) find_next_bit((addr), (size), 0)
+
+#ifndef find_next_bit
+
+static inline unsigned long
+find_next_bit(const unsigned long *addr, unsigned long size, unsigned long offset)
+{
+	const unsigned long *p = addr + BITOP_WORD(offset);
+	unsigned long result = offset & ~(__BITS_PER_LONG-1);
+	unsigned long tmp;
+
+	if (offset >= size)
+		return size;
+	size -= result;
+	offset %= __BITS_PER_LONG;
+	if (offset) {
+		tmp = *(p++);
+		tmp &= (~0UL << offset);
+		if (size < __BITS_PER_LONG)
+			goto found_first;
+		if (tmp)
+			goto found_middle;
+		size -= __BITS_PER_LONG;
+		result += __BITS_PER_LONG;
+	}
+	while (size & ~(__BITS_PER_LONG-1)) {
+		if ((tmp = *(p++)))
+			goto found_middle;
+		result += __BITS_PER_LONG;
+		size -= __BITS_PER_LONG;
+	}
+	if (!size)
+		return result;
+	tmp = *p;
+
+found_first:
+	tmp &= (~0UL >> (__BITS_PER_LONG - size));
+	if (tmp == 0UL)		/* Are any bits set? */
+		return result + size;	/* Nope. */
+found_middle:
+	return result + __ffs(tmp);
+}
+#endif 
+
+#ifndef for_each_set_bit_from
+/* same as for_each_set_bit() but use bit as value to start with */
+#define for_each_set_bit_from(bit, addr, size) \
+	for ((bit) = find_next_bit((addr), (size), (bit));	\
+	     (bit) < (size);					\
+	     (bit) = find_next_bit((addr), (size), (bit) + 1))
+#endif 
+
+#ifndef small_const_nbits
+#define small_const_nbits(nbits) \
+	(__builtin_constant_p(nbits) && (nbits) <= __BITS_PER_LONG)
+
+#endif
+
+#ifndef BITMAP_LAST_WORD_MASK
+#define BITMAP_LAST_WORD_MASK(nbits)					\
+(									\
+	((nbits) % __BITS_PER_LONG) ?					\
+		(1UL<<((nbits) % __BITS_PER_LONG))-1 : ~0UL		\
+)
+#endif
+
+#ifndef bitmap_zero
+static inline void bitmap_zero(unsigned long *dst, int nbits)
+{
+	if (small_const_nbits(nbits))
+		*dst = 0UL;
+	else {
+		int len = BITS_TO_LONGS(nbits) * sizeof(unsigned long);
+		memset(dst, 0, len);
+	}
+}
+#endif
+
+#ifndef __bitmap_empty
+static inline int __bitmap_empty(const unsigned long *bitmap, int bits)
+{
+	int k, lim = bits/__BITS_PER_LONG;
+	for (k = 0; k < lim; ++k)
+		if (bitmap[k])
+			return 0;
+
+	if (bits % __BITS_PER_LONG)
+		if (bitmap[k] & BITMAP_LAST_WORD_MASK(bits))
+			return 0;
+
+	return 1;
+}
+#endif
+
+#ifndef bitmap_empty
+static inline int bitmap_empty(const unsigned long *src, int nbits)
+{
+	if (small_const_nbits(nbits))
+		return ! (*src & BITMAP_LAST_WORD_MASK(nbits));
+	else
+		return __bitmap_empty(src, nbits);
+}
+#endif
+
+#define for_each_set_bit(bit, addr, size) \
+	for ((bit) = find_first_bit((addr), (size));		\
+	     (bit) < (size);					\
+	     (bit) = find_next_bit((addr), (size), (bit) + 1))
+
 
 #endif /* __KCOMPAT_H__ */
 

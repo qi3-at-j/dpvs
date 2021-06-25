@@ -31,6 +31,7 @@
 #define VLAN_ID_MASK                0x0fff
 #define VLAN_HLEN                   4
 #define VLAN_ETH_DATA_LEN           1500
+#define VLAN_N_VID					4096
 
 #define mbuf_vlan_tag_get_id(m)     htons(((m)->vlan_tci & VLAN_ID_MASK))
 
@@ -80,7 +81,7 @@ struct vlan_dev_priv {
 /**
  *  from linux kernel.
  *
- *    struct vlan_ethhdr - vlan ethernet header (ethhdr + vlan_hdr)
+ *    struct vlan_ethhdr - vlan ethernet header (ethhdr + rte_vlan_hdr)
  *    @h_dest: destination ethernet address
  *    @h_source: source ethernet address
  *    @h_vlan_proto: ethernet protocol
@@ -107,6 +108,8 @@ struct netif_port *vlan_find_dev(const struct netif_port *real_dev,
 int vlan_rcv(struct rte_mbuf *mbuf, struct netif_port *rdev);
 
 int vlan_init(void);
+
+inline int vlan_untag_mbuf(struct rte_mbuf *mbuf);
 
 static inline int vlan_insert_tag(struct rte_mbuf *mbuf,
                                   __be16 proto, __be16 id)

@@ -73,6 +73,11 @@ typedef uint16_t    __u16;
 typedef uint32_t    __u32;
 #endif
 
+
+#ifndef __s32
+typedef int32_t    __s32;
+#endif
+
 #ifndef lcoreid_t
 typedef uint8_t lcoreid_t;
 #endif
@@ -128,11 +133,21 @@ enum {
     EDPVS_PKTSTOLEN     = -25,      /* stolen packet */
     EDPVS_SYSCALL       = -26,      /* system call failed */
     EDPVS_NODEV         = -27,      /* no such device */
+	EDPVS_LOOP			= -28,		/* resource busy */
+	EDPVS_FULL   		= -29,		/* no such device */
+	EDPVS_FAILED		= -30,		/* operation failed */
 
     /* positive code for non-error */
     EDPVS_KNICONTINUE   = 1,        /* KNI to continue */
     EDPVS_INPROGRESS    = 2,        /* in progress */
 };
+
+
+
+#define MAX_ERRNO       1000
+#define IS_ERR(x) (((unsigned long)x) >= (unsigned long)-MAX_ERRNO)
+#define ERR_PTR(error) ((void *)(long)error)
+#define PTR_ERR(error) ((long)(void *)error)
 
 extern const char *dpvs_strerror(int err);
 

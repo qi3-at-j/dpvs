@@ -17,7 +17,7 @@
  */
 #ifndef __DPVS_ROUTE_CONF_H__
 #define __DPVS_ROUTE_CONF_H__
-
+#include <netinet/ether.h>
 #include <arpa/inet.h>
 #include <net/if.h>
 #include "inet.h"

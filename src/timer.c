@@ -53,9 +53,12 @@
  * we can use different hash size for levels, consider hashs of non-first
  * level can be much smaller. but let's make things easier, pick up same size,
  * just assuming the memory is big enough.
+ DPVS定时器的用例是大量的连接集中在120秒/60秒等超时值，而其他超时值并没有那么多。
+为了防止太多的计时器需要从更高级别迁移到更低级别，从而导致性能问题，计时器需要一个大的“第一级”轮
+(哈希)来“覆盖”大多数(数百万)连接。
+我们可以为级别使用不同的哈希大小，考虑到非第一级的哈希可以小得多。但让我们简单点，挑同样大小的，
+假设内存足够大。
  */
-
-#define DPVS_TIMER_HZ           1000
 
 /*
  * with 1000hz, if LEVEL_SIZE is 2<<18 and LEVEL_DEPTH is 2:
@@ -84,6 +87,61 @@ static RTE_DEFINE_PER_LCORE(struct timer_scheduler, timer_sched);
 /* global timer. */
 static struct timer_scheduler g_timer_sched;
 
+
+static unsigned long dpvs_round_jiffies_common(unsigned long j, int cpu,
+		bool force_up)
+{
+	int rem;
+	unsigned long original = j;
+	int HZ=100;
+	/*
+	 * We don't want all cpus firing their timers at once hitting the
+	 * same lock or cachelines, so we skew each extra cpu with an extra
+	 * 3 jiffies. This 3 jiffies came originally from the mm/ code which
+	 * already did this.
+	 * The skew is done by adding 3*cpunr, then round, then subtract this
+	 * extra offset again.
+	 我们不希望所有的cpu同时触发它们的计时器，以相同的锁或cacheline，
+	 所以我们将每个额外的cpu倾斜为3 jiffies。这3 jiffies最初来自mm/代码已经做到了这一点。
+	  倾斜是通过添加3*cpunr，然后四边形，然后再减去这个额外的偏移量来完成的。
+	 */
+	j += cpu * 3;
+
+	rem = j % HZ;
+
+	/*
+	 * If the target jiffie is just after a whole second (which can happen
+	 * due to delays of the timer irq, long irq off times etc etc) then
+	 * we should round down to the whole second, not up. Use 1/4th second
+	 * as cutoff for this rounding as an extreme upper bound for this.
+	 * But never round down if @force_up is set.
+	 */
+	if (rem < HZ/4 && !force_up) /* round down */
+		j = j - rem;
+	else /* round up */
+		j = j - rem + HZ;
+
+	/* now that we have rounded, subtract the extra skew again */
+	j -= cpu * 3;
+
+	if (j <= jiffies) /* rounding ate our timeout entirely; */
+		return original;
+	return j;
+}
+
+uint32_t round_jiffies_up(unsigned long j)
+{
+	return dpvs_round_jiffies_common(j, rte_lcore_id(), true);
+}
+
+int mod_timer(struct dpvs_timer *timer,  unsigned long expires, bool global)
+{
+	struct timeval tv;
+	
+	tv.tv_sec = expires / DPVS_TIMER_HZ;
+    tv.tv_usec = expires % DPVS_TIMER_HZ * 1000000 / DPVS_TIMER_HZ;
+	dpvs_timer_update(timer, &tv, global);
+}
 
 static inline void timer_sched_lock(struct timer_scheduler *sched)
 {
@@ -279,6 +337,8 @@ static inline void deviation_measure(void)
  * except system (including timer handles) takes more than
  * one tick to get rte_timer_manage() called.
  * we needn't calculate ticks elapsed by ourself.
+ 在调用之间只需要一个滴答，除了系统(包括定时器句柄)需要一个以上的滴答来获得rte_timer_manage()调用。
+ 我们不需要自己计算蜱虫的时间。
  */
 static void rte_timer_tick_cb(struct rte_timer *tim, void *arg)
 {

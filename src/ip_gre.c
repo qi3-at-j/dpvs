@@ -271,7 +271,7 @@ static int gre_rcv(struct rte_mbuf *mbuf)
     if (hlen < 0)
         goto drop;
 
-    iph = mbuf->userdata; /* see ipv4_local_in_fin */
+    iph = mbuf_userdata_get(mbuf); /* see ipv4_local_in_fin */
     assert(iph->version == 4 && iph->protocol == IPPROTO_GRE);
 
     tnl = ip_tunnel_lookup(&gre_tunnel_tab, mbuf->port, tpi.flags,

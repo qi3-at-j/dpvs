@@ -34,6 +34,7 @@
 #include "ipvs/proto_udp.h"
 #include "ipvs/synproxy.h"
 #include "scheduler.h"
+#include "fw_conf/fw_conf.h"
 
 typedef void (*sighandler_t)(int);
 
@@ -55,6 +56,10 @@ static void keyword_value_init(void)
     synproxy_keyword_value_init();
 
     ipv6_keyword_value_init();
+
+    /* add by whan */
+    fw_keyword_value_init();
+    /* end by whan */
 }
 
 static vector_t install_keywords(void)
@@ -89,6 +94,10 @@ static vector_t install_keywords(void)
     install_sublevel_end();
 
     install_ipv6_keywords();
+
+    /* add by whan */
+    install_fw_keywords();
+    /* end by whan */
 
     return g_keywords;
 }

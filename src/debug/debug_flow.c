@@ -98,8 +98,10 @@ show_flow_cli(cmd_blk_t *cbt)
     }
     return 0;
 }
+
+exnode(flow_connection);
 EOL_NODE(flow_status_eol, show_flow_cli);
-KW_NODE(flow_status, flow_status_eol, none, "status", "show flow status");
+KW_NODE(flow_status, flow_status_eol, flow_connection, "status", "show flow status");
 KW_NODE(show_flow, flow_status, none, "flow", "show flow related items");
 void
 debug_flow_init(void)

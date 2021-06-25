@@ -182,7 +182,7 @@ static int ifa_add_del_mcast(struct inet_ifaddr *ifa, bool add)
 {
     int err;
     union inet_addr iaddr;
-    struct ether_addr eaddr;
+    struct rte_ether_addr eaddr;
 
     /* for ipv6 only */
     if (ifa->af != AF_INET6)
@@ -222,7 +222,7 @@ int idev_add_mcast_init(void *args)
     int err;
     struct inet_device *idev;
     union inet_addr all_nodes, all_routers;
-    struct ether_addr eaddr_nodes, eaddr_routers;
+    struct rte_ether_addr eaddr_nodes, eaddr_routers;
 
     struct netif_port *dev = (struct netif_port *) args;
 
@@ -425,8 +425,8 @@ static void ifa_unhash(struct inet_ifaddr *ifa)
 
     /* free sapool when no one is using it.
      * note ifa may free from here. */
-    if (ifa->flags & IFA_F_SAPOOL)
-        sa_pool_destroy(ifa);
+    //if (ifa->flags & IFA_F_SAPOOL)
+        //sa_pool_destroy(ifa);
 
     rte_atomic32_dec(&ifa->refcnt);
 }
@@ -851,7 +851,7 @@ static int ifa_entry_add(const struct ifaddr_action *param)
         goto del_mc;
 
     if (ifa->flags & IFA_F_SAPOOL) {
-        err = sa_pool_create(ifa, 0, 0);
+        //err = sa_pool_create(ifa, 0, 0);
         if (err != EDPVS_OK)
             goto del_route;
     }

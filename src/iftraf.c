@@ -675,7 +675,7 @@ static int iftraf_pkt_deliver(int af, struct rte_mbuf *mbuf, struct netif_port *
     portid_t devid;
 
     if (af == AF_INET) {
-        struct ipv4_hdr *ip4h = ip4_hdr(mbuf);
+        struct rte_ipv4_hdr *ip4h = ip4_hdr(mbuf);
 
         if (unlikely(ip4h->next_proto_id != IPPROTO_TCP &&
             ip4h->next_proto_id != IPPROTO_UDP)) {
@@ -736,8 +736,8 @@ static int iftraf_pkt_deliver(int af, struct rte_mbuf *mbuf, struct netif_port *
             __func__, cid, dir, pkt->devid, pkt->ifname, pkt->proto, ip4h->src_addr, ip4h->dst_addr, ntohs(pkt->src_port), ntohs(pkt->dst_port), pkt->pkt_len);
 
     } else if (af == AF_INET6) {
-        struct ip6_hdr *ip6h = ip6_hdr(mbuf);
-        uint8_t ip6nxt = ip6h->ip6_nxt;
+        struct rte_ipv6_hdr *ip6h = ip6_hdr(mbuf);
+        uint8_t ip6nxt = ip6h->proto;
 
         if (unlikely(ip6nxt != IPPROTO_TCP &&
             ip6nxt != IPPROTO_UDP)) {
@@ -781,13 +781,13 @@ static int iftraf_pkt_deliver(int af, struct rte_mbuf *mbuf, struct netif_port *
         pkt->dir = dir;
         pkt->proto = ip6nxt;
         if (dir == IFTRAF_PKT_DIR_IN) {
-            pkt->saddr.in6 = ip6h->ip6_src;
-            pkt->daddr.in6 = ip6h->ip6_dst;
+			memcpy(&pkt->saddr.in6, ip6h->src_addr, sizeof(uint8_t)*16);
+			memcpy(&pkt->daddr.in6, ip6h->dst_addr, sizeof(uint8_t)*16);
             pkt->src_port = ports[0];
             pkt->dst_port = ports[1];
         } else {
-            pkt->saddr.in6 = ip6h->ip6_dst;
-            pkt->daddr.in6 = ip6h->ip6_src;
+            memcpy(&pkt->saddr.in6.s6_addr, ip6h->src_addr, sizeof(uint8_t)*16);
+			memcpy(&pkt->daddr.in6.s6_addr, ip6h->dst_addr, sizeof(uint8_t)*16);
             pkt->src_port = ports[1];
             pkt->dst_port = ports[0];
         }

@@ -31,21 +31,57 @@
 #define DPVS_MAX_LCORE RTE_MAX_LCORE
 #endif
 
+typedef uint64_t netdev_features_t;
+
 enum {
-    NETIF_PORT_FLAG_ENABLED                 = (0x1<<0),
+    NETIF_PORT_RX_IP_CSUM_OFFLOAD      = (0x1<<1),
+    NETIF_PORT_TX_IP_CSUM_OFFLOAD      = (0x1<<2),
+    NETIF_PORT_TX_TCP_CSUM_OFFLOAD     = (0x1<<3),
+    NETIF_PORT_TX_UDP_CSUM_OFFLOAD     = (0x1<<4),
+    NETIF_PORT_TX_VLAN_INSERT_OFFLOAD  = (0x1<<5),
+    NETIF_PORT_RX_VLAN_STRIP_OFFLOAD   = (0x1<<6),
+    NETIF_PORT_RX_VLAN_FILTER_OFFLOAD  = (0x1<<7),
+
+};
+
+enum {
+	NETIF_PORT_FLAG_ENABLED                 = (0x1<<0),
     NETIF_PORT_FLAG_RUNNING                 = (0x1<<1),
     NETIF_PORT_FLAG_STOPPED                 = (0x1<<2),
-    NETIF_PORT_FLAG_RX_IP_CSUM_OFFLOAD      = (0x1<<3),
-    NETIF_PORT_FLAG_TX_IP_CSUM_OFFLOAD      = (0x1<<4),
-    NETIF_PORT_FLAG_TX_TCP_CSUM_OFFLOAD     = (0x1<<5),
-    NETIF_PORT_FLAG_TX_UDP_CSUM_OFFLOAD     = (0x1<<6),
-    NETIF_PORT_FLAG_TX_VLAN_INSERT_OFFLOAD  = (0x1<<7),
-    NETIF_PORT_FLAG_RX_VLAN_STRIP_OFFLOAD   = (0x1<<8),
-    NETIF_PORT_FLAG_FORWARD2KNI             = (0x1<<9),
-    NETIF_PORT_FLAG_TC_EGRESS               = (0x1<<10),
-    NETIF_PORT_FLAG_TC_INGRESS              = (0x1<<11),
-    NETIF_PORT_FLAG_NO_ARP                  = (0x1<<12),
+    NETIF_PORT_FLAG_FORWARD2KNI             = (0x1<<3),
+    NETIF_PORT_FLAG_TC_EGRESS               = (0x1<<4),
+    NETIF_PORT_FLAG_TC_INGRESS              = (0x1<<5),
+    NETIF_PORT_FLAG_NO_ARP                  = (0x1<<6),
+    NETIF_PORT_FLAG_LOOPBACK                = (0x1<<7),
 };
+
+
+enum{
+	/* Private (from user) interface flags (netdevice->priv_flags). */
+	PRIV_FLAG_802_1Q_VLAN                   = (0x1<<0),			  /* 802.1Q VLAN device.		  */
+	PRIV_FLAG_EBRIDGE	                    = (0x1<<1), 	/* Ethernet bridging device.	*/
+	PRIV_FLAG_SLAVE_INACTIVE	            = (0x1<<2), /* bonding slave not the curr. active */
+	PRIV_FLAG_MASTER_8023AD                 = (0x1<<3), /* bonding master, 802.3ad. 	*/
+	PRIV_FLAG_MASTER_ALB	                = (0x1<<4),		/* bonding master, balance-alb. */
+	PRIV_FLAG_BONDING	                    = (0x1<<5),		/* bonding master or slave	*/
+	PRIV_FLAG_SLAVE_NEEDARP                 = (0x1<<6),		/* need ARPs for validation */
+	PRIV_FLAG_ISATAP	                    = (0x1<<7),		/* ISATAP interface (RFC4214)	*/
+	PRIV_FLAG_MASTER_ARPMON                 = (0x1<<8),		/* bonding master, ARP mon in use */
+	PRIV_FLAG_WAN_HDLC	                    = (0x1<<9),		/* WAN HDLC device		*/
+	PRIV_FLAG_XMIT_DST_RELEASE              = (0x1<<10),	/* dev_hard_start_xmit() is allowed to * release skb->dst  */
+	PRIV_FLAG_DONT_BRIDGE                   = (0x1<<11), 	/* disallow bridging this ether dev */
+	PRIV_FLAG_DISABLE_NETPOLL	            = (0x1<<12),	/* disable netpoll at run-time */
+	PRIV_FLAG_MACVLAN_PORT	                = (0x1<<13),	/* device used as macvlan port */
+	PRIV_FLAG_BRIDGE_PORT	                = (0x1<<14),		/* device used as bridge port */
+	PRIV_FLAG_OVS_DATAPATH	                = (0x1<<15),	/* device used as Open vSwitch* datapath port */
+	PRIV_FLAG_TX_SKB_SHARING	            = (0x1<<16), /* The interface supports sharing * skbs on transmit */
+	PRIV_FLAG_UNICAST_FLT	                = (0x1<<17), 	/* Supports unicast filtering	*/
+	PRIV_FLAG_TEAM_PORT                     = (0x1<<18), 	/* device used as team port */
+	PRIV_FLAG_SUPP_NOFCS	                = (0x1<<19), 	/* device supports sending custom FCS */
+	PRIV_FLAG_LIVE_ADDR_CHANGE              = (0x1<<20), /* device supports hardware address
+						 * change when it's running */
+};
+
 
 /* max tx/rx queue number for each nic */
 #define NETIF_MAX_QUEUES            16
@@ -69,6 +105,8 @@ enum {
 
 #define NETIF_LCORE_ID_INVALID      0xFF
 
+#define MAX_RX_QUEUE_PER_LCORE 16
+
 /************************* lcore conf  ***************************/
 struct rx_partner;
 
@@ -80,6 +118,12 @@ struct netif_queue_conf
     struct rx_partner *isol_rxq;
     struct rte_mbuf *mbufs[NETIF_MAX_PKT_BURST];
 } __rte_cache_aligned;
+
+struct lcore_rx_queue {
+	uint16_t port_id;
+	uint8_t queue_id;
+	char node_name[RTE_NODE_NAMESIZE];
+};
 
 /*
  * RX/TX port conf for lcore.
@@ -108,6 +152,12 @@ struct netif_lcore_conf
     int nports;
     /* port list of this lcore to process */
     struct netif_port_conf pqs[NETIF_MAX_RTE_PORTS];
+	//new add
+	uint16_t n_rx_queue;
+	struct lcore_rx_queue rx_queue_list[MAX_RX_QUEUE_PER_LCORE];
+	struct rte_graph *graph;
+	char name[RTE_GRAPH_NAMESIZE];
+	rte_graph_t graph_id;
 } __rte_cache_aligned;
 
 /* isolate RX lcore */
@@ -158,13 +208,15 @@ typedef enum {
     PORT_TYPE_BOND_SLAVE,
     PORT_TYPE_VLAN,
     PORT_TYPE_TUNNEL,
+    PORT_TYPE_BRIDGE,
+    PORT_TYPE_BRIDGE_IF,
     PORT_TYPE_INVAL,
 } port_type_t;
 
 struct netif_kni {
     char name[IFNAMSIZ];
     struct rte_kni *kni;
-    struct ether_addr addr;
+    struct rte_ether_addr addr;
     struct dpvs_timer kni_rtnl_timer;
     int kni_rtnl_fd;
     struct rte_ring *rx_ring;
@@ -188,19 +240,25 @@ struct netif_ops {
     int (*op_open)(struct netif_port *dev);
     int (*op_stop)(struct netif_port *dev);
     int (*op_xmit)(struct rte_mbuf *m, struct netif_port *dev);
+	int (*op_set_mac_address)(struct netif_port *dev,
+						       void *addr);
     int (*op_set_mc_list)(struct netif_port *dev);
     int (*op_filter_supported)(struct netif_port *dev, enum rte_filter_type fltype);
     int (*op_set_fdir_filt)(struct netif_port *dev, enum rte_filter_op op,
-                            const struct rte_eth_fdir_filter *filt);
+                           const struct rte_eth_fdir_filter *filt);
     int (*op_get_queue)(struct netif_port *dev, lcoreid_t cid, queueid_t *qid);
     int (*op_get_link)(struct netif_port *dev, struct rte_eth_link *link);
     int (*op_get_promisc)(struct netif_port *dev, bool *promisc);
     int (*op_get_stats)(struct netif_port *dev, struct rte_eth_stats *stats);
+	int	(*op_change_mtu)(struct netif_port *dev, int new_mtu);
+	int (*op_add_slave)(struct netif_port *dev, struct netif_port *slave_dev);
+	int (*op_del_slave)(struct netif_port *dev, struct netif_port *slave_dev);
+	int (*op_vlan_rx_add_vid)(struct netif_port *dev, uint16_t vlan_id, int on);
 };
 
 struct netif_hw_addr {
     struct list_head        list;
-    struct ether_addr       addr;
+    struct rte_ether_addr       addr;
     rte_atomic32_t          refcnt;
     /*
      * - sync only once!
@@ -227,12 +285,14 @@ struct netif_port {
     char                    name[IFNAMSIZ];  /* device name */
     portid_t                id;                         /* device id */
     port_type_t             type;                       /* device type */
-    uint16_t                flag;                       /* device flag */
+    netdev_features_t       offload;                    /* device offload */
+	uint32_t                flags;						//网络设备接口的标识符,其状态类型被定义在<linux/if.h>之中；
+	uint32_t                priv_flags;
     int                     nrxq;                       /* rx queue number */
     int                     ntxq;                       /* tx queue numbe */
     uint16_t                rxq_desc_nb;                /* rx queue descriptor number */
     uint16_t                txq_desc_nb;                /* tx queue descriptor number */
-    struct ether_addr       addr;                       /* MAC address */
+    struct rte_ether_addr       addr;                       /* MAC address */
     struct netif_hw_addr_list mc;                       /* HW multicast list */
     int                     socket;                     /* socket id */
     int                     hw_header_len;              /* HW header length */
@@ -248,8 +308,12 @@ struct netif_port {
     struct netif_kni        kni;                        /* kni device */
     union netif_bond        *bond;                      /* bonding conf */
     struct vlan_info        *vlan_info;                 /* VLANs info for real device */
+	struct net_bridge_port  *br_port;
+	struct list_head	    upper_dev_list;             /* List of upper devices */
     struct netif_tc         tc;                         /* traffic control */
     struct netif_ops        *netif_ops;
+	void (*destructor)(struct netif_port *dev);
+	rte_atomic32_t      	refcnt;
 } __rte_cache_aligned;
 
 /**************************** lcore API *******************************/
@@ -267,6 +331,7 @@ bool is_lcore_id_valid(lcoreid_t cid);
 bool netif_lcore_is_fwd_worker(lcoreid_t cid);
 void lcore_process_packets(struct netif_queue_conf *qconf, struct rte_mbuf **mbufs,
                            lcoreid_t cid, uint16_t count, bool pkts_from_ring);
+uint32_t netif_get_all_enabled_cores_nb(void);
 
 /************************** protocol API *****************************/
 int netif_register_pkt(struct pkt_type *pt);
@@ -297,10 +362,30 @@ int netif_get_stats(struct netif_port *dev, struct rte_eth_stats *stats);
 struct netif_port *netif_alloc(size_t priv_size, const char *namefmt,
                                unsigned int nrxq, unsigned int ntxq,
                                void (*setup)(struct netif_port *));
+void netif_hold(struct netif_port *dev);
 portid_t netif_port_count(void);
 int netif_free(struct netif_port *dev);
 int netif_port_register(struct netif_port *dev);
 int netif_port_unregister(struct netif_port *dev);
+
+void netif_put(struct netif_port *dev);
+void netdev_upper_dev_unlink(struct netif_port *dev,
+			     struct netif_port *upper_dev);
+int netdev_master_upper_dev_link(struct netif_port *dev,
+				 struct netif_port *upper_dev);
+int netif_set_mtu(struct netif_port *dev, int new_mtu);
+
+/**************************graph API**********************************/
+struct rte_node_ethdev_config *get_node_ethdev_config(void);
+uint16_t get_node_ethdev_config_nb(void);
+void netif_init_graph_need_to_create(void);
+uint16_t  netif_get_graph_need_to_create(void);
+
+extern volatile bool force_quit;
+
+inline eth_type_t eth_type_parse(const struct rte_ether_hdr *eth_hdr,
+                                        const struct netif_port *dev);
+
 
 /************************** module API *****************************/
 int netif_vdevs_add(void);

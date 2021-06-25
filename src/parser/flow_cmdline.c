@@ -39,7 +39,7 @@ cmdline_valid_buffer(struct rdline *rdl, const char *buf,
             message[i] = ' ';
 		}
 		snprintf(&message[space], RDLINE_BUF_SIZE-space, "%s", errstr);
-		tyflow_cmdline_printf(cl, message);
+		tyflow_cmdline_printf(cl, "%s", message);
 	}
 
 #if 0
@@ -73,7 +73,7 @@ cmdline_complete_buffer(struct rdline *rdl, const char *buf,
 		}
 		snprintf(&message[space], RDLINE_BUF_SIZE-space, "%s", "^ Command not found\n");
         tyflow_cmdline_printf(cl, "\r\n");
-		tyflow_cmdline_printf(cl, message);
+		tyflow_cmdline_printf(cl, "%s", message);
         return -1;
     }
     return 0;

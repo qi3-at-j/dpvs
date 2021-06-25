@@ -19,7 +19,7 @@
 # Makefile for dpvs (DPVS main program).
 #
 
-#DEBUG := 1		# enable for debug
+DEBUG := 1		# enable for debug
 
 TARGET := dpvs
 
@@ -34,10 +34,10 @@ DATE_STRING := $(shell date +%Y.%m.%d.%H:%M:%S)
 # same path of THIS Makefile
 SRCDIR := $(dir $(realpath $(firstword $(MAKEFILE_LIST))))
 
-ifeq ($(RTE_SDK),)
-	$(error "The variable RTE_SDK is not defined.")
-endif
-include $(RTE_SDK)/mk/rte.vars.mk
+#ifeq ($(RTE_SDK),)
+#	$(error "The variable RTE_SDK is not defined.")
+#endif
+#include $(RTE_SDK)/mk/rte.vars.mk
 
 include $(SRCDIR)/config.mk
 include $(SRCDIR)/dpdk.mk
@@ -49,7 +49,9 @@ CFLAGS += -g
 # for dpvs main program.
 CFLAGS += -D __DPVS__ -DDPVS_VERSION=\"$(VERSION_STRING)\" -DDPVS_BUILD_DATE=\"$(DATE_STRING)\"
 
-CFLAGS += -Wall -Werror -Wstrict-prototypes -Wmissing-prototypes -mcmodel=medium
+CFLAGS += -Wall -Wstrict-prototypes -Wmissing-prototypes -mcmodel=medium #-Werror
+
+CFLAGS +=  -march=native
 
 ifeq ($(shell test $(GCC_VERSION) -ge 70 && echo 1), 1)
 	CFLAGS += -Wno-format-truncation

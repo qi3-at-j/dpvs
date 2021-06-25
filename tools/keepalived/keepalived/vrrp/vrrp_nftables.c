@@ -698,7 +698,7 @@ nftnl_rule *setup_rule(uint8_t family, const char *table,
 			    saddr ? offsetof(struct iphdr, saddr) : offsetof(struct iphdr, daddr), sizeof(uint32_t));
 	else
 		add_payload(r, NFT_PAYLOAD_NETWORK_HEADER, NFT_REG_1,
-			    saddr ? offsetof(struct ip6_hdr, ip6_src) : offsetof(struct ip6_hdr, ip6_dst), sizeof(struct in6_addr));
+			    saddr ? offsetof(struct rte_ipv6_hdr, ip6_src) : offsetof(struct rte_ipv6_hdr, ip6_dst), sizeof(struct in6_addr));
 
 	add_lookup(r, NFT_REG_1, NO_REG, set, 0, neg);
 
@@ -808,7 +808,7 @@ nftnl_rule *setup_rule_if(uint8_t family, const char *table,
 			    saddr ? offsetof(struct iphdr, saddr) : offsetof(struct iphdr, daddr), sizeof(uint32_t));
 	else
 		add_payload(r, NFT_PAYLOAD_NETWORK_HEADER, NFT_REG_1,
-			    saddr ? offsetof(struct ip6_hdr, ip6_src) : offsetof(struct ip6_hdr, ip6_dst), sizeof(struct in6_addr));
+			    saddr ? offsetof(struct rte_ipv6_hdr, ip6_src) : offsetof(struct rte_ipv6_hdr, ip6_dst), sizeof(struct in6_addr));
 
 	if (saddr)
 		add_meta(r, use_name ? NFT_META_OIFNAME : NFT_META_OIF, NFT_REG_2);
@@ -947,7 +947,7 @@ static struct nftnl_rule
 	}
 
 	add_payload(r, NFT_PAYLOAD_NETWORK_HEADER, NFT_REG_1,
-		    saddr ? offsetof(struct ip6_hdr, ip6_src) : offsetof(struct ip6_hdr, ip6_dst), sizeof(struct in6_addr));
+		    saddr ? offsetof(struct rte_ipv6_hdr, ip6_src) : offsetof(struct rte_ipv6_hdr, ip6_dst), sizeof(struct in6_addr));
 
 	/* The following is interpreted as a range by nftables */
 	ip6.s6_addr32[0] = htonl(0xfe800000);
@@ -972,7 +972,7 @@ setup_rule_icmpv6(uint8_t family, const char *table,
 {
 	struct nftnl_rule *r = NULL;
 	uint64_t handle_num;
-	struct ip6_hdr ip6;
+	struct rte_ipv6_hdr ip6;
 	struct icmp6_hdr icmp6;
 
 	r = nftnl_rule_alloc();
@@ -992,7 +992,7 @@ setup_rule_icmpv6(uint8_t family, const char *table,
 
 	ip6.ip6_ctlun.ip6_un1.ip6_un1_nxt = IPPROTO_ICMPV6;
 	add_payload(r, NFT_PAYLOAD_NETWORK_HEADER, NFT_REG_1,
-		    offsetof(struct ip6_hdr, ip6_ctlun.ip6_un1.ip6_un1_nxt), sizeof(ip6.ip6_ctlun.ip6_un1.ip6_un1_nxt));
+		    offsetof(struct rte_ipv6_hdr, ip6_ctlun.ip6_un1.ip6_un1_nxt), sizeof(ip6.ip6_ctlun.ip6_un1.ip6_un1_nxt));
 	add_cmp(r, NFT_REG_1, NFT_CMP_EQ, &ip6.ip6_ctlun.ip6_un1.ip6_un1_nxt, sizeof(ip6.ip6_ctlun.ip6_un1.ip6_un1_nxt));
 
 	add_payload(r, NFT_PAYLOAD_TRANSPORT_HEADER, NFT_REG_1,
@@ -1752,7 +1752,7 @@ static struct nftnl_rule
 #endif
 	} else {
 		add_payload(r, NFT_PAYLOAD_NETWORK_HEADER, NFT_REG_1,
-			    offsetof(struct ip6_hdr, ip6_dst), sizeof(struct in6_addr));
+			    offsetof(struct rte_ipv6_hdr, ip6_dst), sizeof(struct in6_addr));
 
 		ip6.s6_addr32[0] = htonl(0xff020000);
 		ip6.s6_addr32[1] = ip6.s6_addr32[2] = 0;

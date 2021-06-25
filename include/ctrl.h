@@ -227,9 +227,15 @@ enum {
     MSG_TYPE_SVC_GET_DESTS,
     MSG_TYPE_LADDR_GET_ALL,
 };
+
+
 #define MSG_TYPE_SVC_SET_BASE MSG_TYPE_SVC_SET_FLUSH
 #define MSG_TYPE_SVC_GET_BASE MSG_TYPE_SVC_GET_INFO
 #define MSG_TYPE_SET_LADDR_BASE MSG_TYPE_LADDR_SET_ADD
+
+
+//上面简直混乱，所以新增的类型都放在这里吧，从1000开始
+#define MSG_TYPE_GENER_RCU                  1000
 
 #define SOCKOPT_VERSION_MAJOR               1
 #define SOCKOPT_VERSION_MINOR               0

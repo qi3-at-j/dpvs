@@ -28,14 +28,14 @@ static inline int mbuf_nat6to4_len(struct rte_mbuf *mbuf)
     int len;
 
     offset = ip6_skip_exthdr(mbuf, offset, &nexthdr);
-    len = mbuf->pkt_len - offset + sizeof(struct ipv4_hdr);
+    len = mbuf->pkt_len - offset + sizeof(struct rte_ipv4_hdr);
 
     return len;
 }
 
 static inline int mbuf_nat4to6_len(struct rte_mbuf *mbuf)
 {
-    return (mbuf->pkt_len - ip4_hdrlen(mbuf) + sizeof(struct ip6_hdr));
+    return (mbuf->pkt_len - ip4_hdrlen(mbuf) + sizeof(struct rte_ipv6_hdr));
 }
 
 int mbuf_6to4(struct rte_mbuf *mbuf,

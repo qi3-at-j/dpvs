@@ -183,14 +183,14 @@ debug_print_hex(const char *output, uint32_t size)
 void
 debug_trace_packet_mac(struct rte_mbuf *mbuf)
 {
-    void *mac = rte_pktmbuf_mtod_offset(mbuf, struct ether_hdr*, 0);
+    void *mac = rte_pktmbuf_mtod_offset(mbuf, struct rte_ether_hdr*, 0);
     debug_print_hex(mac, 54);
 }
 
 void
 debug_trace_packet_ip(struct rte_mbuf *mbuf)
 {
-    void *ip = rte_pktmbuf_mtod_offset(mbuf, struct ipv4_hdr *, sizeof(struct ether_hdr));
+    void *ip = rte_pktmbuf_mtod_offset(mbuf, struct rte_ipv4_hdr *, sizeof(struct rte_ether_hdr));
     debug_print_hex(ip, 40);
 }
 
