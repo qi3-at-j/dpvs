@@ -273,7 +273,48 @@ show_flow_connection_cli(cmd_blk_t *cbt)
                 paras.mask |= CLR_GET_CONN_SRCIP;
                 if (cbt->number[1]) {
                     paras.src_mask = number_2_mask(cbt->number[1]);
+					paras.mask |= CLR_GET_CONN_SRCIP_MASK;
                 }
+            }
+            if (cbt->which[2] == 1) {
+                paras.dst_ip = cbt->ipv4[1];
+                paras.mask |= CLR_GET_CONN_DESIP;
+                if (cbt->number[1]) {
+                    paras.dst_mask = number_2_mask(cbt->number[2]);
+					paras.mask |= CLR_GET_CONN_DESIP_MASK;
+                }
+            }
+            if (cbt->which[3] == 1) {
+                paras.protocol_low = cbt->number[3];
+                paras.mask |= CLR_GET_CONN_PROTOCOL_LOW;
+                if (cbt->number[4]) {
+                    paras.protocol_high = cbt->number[4];
+					paras.mask |= CLR_GET_CONN_PROTOCOL_HIGH;
+                }
+            }
+            if (cbt->which[4] == 1) {
+                paras.srcport_low = cbt->number[5];
+                paras.mask |= CLR_GET_CONN_SRCPORT_LOW;
+                if (cbt->number[6]) {
+                    paras.srcport_high = cbt->number[6];
+					paras.mask |= CLR_GET_CONN_SRCPORT_HIGH;
+                }
+            }
+            if (cbt->which[5] == 1) {
+                paras.dstport_low = cbt->number[7];
+                paras.mask |= CLR_GET_CONN_DESPORT_LOW;
+                if (cbt->number[8]) {
+                    paras.dstport_high = cbt->number[8];
+					paras.mask |= CLR_GET_CONN_DESPORT_HIGH;
+                }
+            }
+            if (cbt->which[6] == 1) {
+                paras.vrf_id = cbt->number[9];
+                paras.mask |= CLR_GET_CONN_VRF_ID;
+            }
+            if (cbt->which[7] == 1) {
+                paras.policy_id = cbt->number[10];
+                paras.mask |= CLR_GET_CONN_FW_POLICY;
             }
             break;
         default:
