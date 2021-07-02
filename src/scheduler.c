@@ -19,6 +19,7 @@
 #include <assert.h>
 #include "conf/common.h"
 #include "scheduler.h"
+#include "flow_cli.h"
 
 /* Note: lockless, lcore_job can only be register on initialization stage and
  *       unregistered on cleanup stage.
@@ -220,6 +221,12 @@ static int dpvs_job_loop(void *arg)
             }
         }
 
+        if (show_flow_ctx.cid &&
+            show_flow_ctx.cbt &&
+            rte_lcore_id() == show_flow_ctx.cid) {
+            show_flow_connection(&show_flow_ctx);
+        }
+
 #ifdef CONFIG_RECORD_BIG_LOOP
         loop_end = rte_get_timer_cycles();
         loop_time = (loop_end - loop_start) * 1000000 / g_cycles_per_sec;
@@ -239,7 +246,7 @@ static int dpvs_job_loop(void *arg)
     return EDPVS_OK;
 }
 
-#if CONSOLE_USING_THREAD
+#ifndef CONSOLE_USING_FORK
 /* master handling thread */
 static pthread_t ctflow_console_thread;
 #endif
@@ -250,7 +257,7 @@ ctflow_console_job_start(void)
 {
 	int ret;
 
-#if CONSOLE_USING_THREAD
+#ifndef CONSOLE_USING_FORK
 	ret = pthread_create(&ctflow_console_thread, NULL, console_entry, NULL);
 	if (ret) {
 		RTE_LOG(ERR, DSCHED, "faile to create console\n");

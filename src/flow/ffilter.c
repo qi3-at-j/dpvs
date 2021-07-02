@@ -17,11 +17,15 @@
 #include <netinet/in.h>
 
 #include "flow.h"
+#include "parser/flow_cmdline_parse.h"
+#include "parser/flow_cmdline.h"
+#include "debug_flow.h"
+#include "ffilter.h"
 
 /*
  * filter variables, 0 if don't care.
  */
-uchar total_ffilter=0;
+uint32_t total_ffilter=0;
 ffilter_ent_t ffilter_ent[MAX_FFILTER_NUM];
 
 /*
@@ -153,7 +157,7 @@ flow_filter_init (void)
 	add_get_cmd(&cnode(get_ffilter));
 }
 
-int 
+static int 
 pak_match_filter (struct rte_ipv4_hdr *iphdr, uint32_t *iptr)
 {
 	int src_port;
@@ -181,7 +185,7 @@ pak_match_filter (struct rte_ipv4_hdr *iphdr, uint32_t *iptr)
 }
 
 int 
-pak_match_filter_reverse (struct rte_ipv4_hdr *iphdr, uint *iptr)
+static pak_match_filter_reverse (struct rte_ipv4_hdr *iphdr, uint *iptr)
 {
 	int src_port;
 	int dst_port;

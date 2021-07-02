@@ -443,6 +443,8 @@ int main(int argc, char *argv[])
 
     log_slave_init();
 
+    flow_init();
+
     /* start slave worker threads */
     dpvs_lcore_start(0);
 

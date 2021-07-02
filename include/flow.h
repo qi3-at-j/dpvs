@@ -13,13 +13,15 @@
  * GNU General Public License for more details.
  */
 
-#ifndef __DPVS_FLOW_H__
-#define __DPVS_FLOW_H__
+#ifndef __TYFLOW_FLOW_H__
+#define __TYFLOW_FLOW_H__
 
 #include <sys/types.h>
 #include <rte_mbuf.h>
+
 #include "conf/common.h"
 #include "conf/flow.h"
+#include "dpdk.h"
 #include "netif.h"
 #include "inet.h"
 
@@ -104,6 +106,7 @@ typedef struct conn_sub_ {
     char resv;
 #define RESV_AA 0xAA
 #define RESV_BB 0xBB
+    /* fields below "start" is variable */
     char start[0];
     uint8_t  wsf;            /* the window scale factor */
     uint32_t  cspflag;
@@ -118,34 +121,36 @@ typedef struct conn_sub_ {
 #define CSP_L2_READY            0x100
 #define CSP_L2INFO_IS_ARP       0x200
     csp_key_t key;
-#define src_ip    key.src_ip
-#define dst_ip    key.dst_ip
-#define src_port  key.src_port
-#define dst_port  key.dst_port
-#define proto     key.proto
-#define csp_token key.csp_token
+#define csp_src_ip    key.src_ip
+#define csp_dst_ip    key.dst_ip
+#define csp_src_port  key.src_port
+#define csp_dst_port  key.dst_port
+#define csp_proto     key.proto
+#define csp_token     key.csp_token
     uint16_t win;            /* window size before scaling */
     uint16_t pmtu;           /* path mtu */
     uint64_t byte_cnt;
     uint64_t pkt_cnt;
     struct hlist_node hnode; /* used to link connsubs */
-    route_ent_t *route;
-    conn_l2info_t csp_l2info;
-    netif_port *ifp;
+    struct route_entry *route;
+    //conn_l2info_t csp_l2info;
+    struct netif_port *ifp;
 } conn_sub_t;
 
 #define IS_CSP_DISABLE(x)    ((x)->cspflag & CSP_DISABLE)
 #define SET_CSP_DISABLE(x)   ((x)->cspflag |= CSP_DISABLE)
 #define CLEAR_CSP_DISABLE(x) ((x)->cspflag &= ~CSP_DISABLE)
 
-#define is_csp_l2info_arp(x) ((x)->cspflag & CSP_L2INFO_IS_ARP)
-#define set_csp_l2info_arp_flag(x) ((x)->cspflag |= CSP_L2INFO_IS_ARP)
-#define clear_csp_l2info_arp_flag(x) ((x)->cspflag &= ~CSP_L2INFO_IS_ARP)
+//#define is_csp_l2info_arp(x) ((x)->cspflag & CSP_L2INFO_IS_ARP)
+//#define set_csp_l2info_arp_flag(x) ((x)->cspflag |= CSP_L2INFO_IS_ARP)
+//#define clear_csp_l2info_arp_flag(x) ((x)->cspflag &= ~CSP_L2INFO_IS_ARP)
 
 typedef struct flow_connection_ {
     conn_sub_t conn_sub0;
     conn_sub_t conn_sub1;
     struct flow_connection_ *next;
+    /* fields below "start" is variable */
+    char start[0];
     uint16_t  time;
     uint16_t  time_const;
     uint64_t  start_time;
@@ -180,8 +185,60 @@ typedef struct flow_connection_ {
     void *fwsession;
 } flow_connection_t;
 
-#define csp2base(x) ((flow_connection_t *)((int64_t)x + x->base_offset))
-#define csp2peer(x) ((conn_sub_t *)((int64_t)x + x->peer_offset))
+typedef int (* flow_vector_t)(struct rte_mbuf *mbuf);
+
+#if 0
+#define FLOW_CONN_MAX_NUMBER       (0x80000)   /*512K*/
+#else
+#define FLOW_CONN_MAX_NUMBER       (0x800)   /*512K*/
+#endif
+#define FLOW_CONN_HASH_TAB_SIZE    (FLOW_CONN_MAX_NUMBER>>3)   /*64K*/
+#define FLOW_CONN_HASH_TAB_MASK    (FLOW_CONN_HASH_TAB_SIZE-1)
+
+#define FLOW_CONN_NOTIMEOUT   65535     /* indicate no timeout */
+
+/* per lcore flow connection table */
+RTE_DECLARE_PER_LCORE(flow_connection_t *, flowConnTable);
+/* per lcore flow connection lifo head */
+RTE_DECLARE_PER_LCORE(flow_connection_t *, flowConnHead);
+/* per lcore flow connection hash tab base*/
+RTE_DECLARE_PER_LCORE(struct hlist_head * /* conn_sub_t** */, flow_conn_hash_base);
+/* per lcore flow connection hash cnt table base */
+RTE_DECLARE_PER_LCORE(uint32_t *, flow_conn_hash_cnt_base);
+
+/* per lcore flow connection statistics */
+RTE_DECLARE_PER_LCORE(uint32_t, flow_curr_conn);
+RTE_DECLARE_PER_LCORE(uint32_t, flow_invalid_conn);
+RTE_DECLARE_PER_LCORE(uint32_t, flow_no_conn);
+RTE_DECLARE_PER_LCORE(uint32_t, flow_free_conn);
+
+/* flow is ready to go? */
+RTE_DECLARE_PER_LCORE(uint32_t, flow_status);
+
+/* per lcore flow connection ager */
+RTE_DECLARE_PER_LCORE(struct rte_timer, flow_conn_ager);
+
+/* per lcore flow vector list */
+RTE_DECLARE_PER_LCORE(flow_vector_t *, flow_vector_list);
+
+/* per lcore flow connection control prototype */
+RTE_DECLARE_PER_LCORE(flow_connection_t, flow_conn_crt_t);
+
+#define this_flowConnTable           (RTE_PER_LCORE(flowConnTable))
+#define this_flowConnHead            (RTE_PER_LCORE(flowConnHead))
+#define this_flow_conn_hash_base     (RTE_PER_LCORE(flow_conn_hash_base))
+#define this_flow_conn_hash_cnt_base (RTE_PER_LCORE(flow_conn_hash_cnt_base))
+#define this_flow_curr_conn          (RTE_PER_LCORE(flow_curr_conn))
+#define this_flow_invalid_conn       (RTE_PER_LCORE(flow_invalid_conn))
+#define this_flow_no_conn            (RTE_PER_LCORE(flow_no_conn))
+#define this_flow_free_conn          (RTE_PER_LCORE(flow_free_conn))
+#define this_flow_status             (RTE_PER_LCORE(flow_status))
+#define this_flow_conn_ager          (RTE_PER_LCORE(flow_conn_ager))
+#define this_flow_conn_crt           (&RTE_PER_LCORE(flow_conn_crt_t))
+#define this_flow_vector_list        (RTE_PER_LCORE(flow_vector_list))
+
+#define csp2base(x) ((flow_connection_t *)((uint64_t)(x) + (x)->base_offset))
+#define csp2peer(x) ((conn_sub_t *)((uint64_t)(x) + (x)->peer_offset))
 
 /*
  *	connection_id to fcp.
@@ -217,8 +274,15 @@ enum {
     RTE_MBUF_CONN_SUB1 = 1,
     RTE_MBUF_MAX = 9,
 };
-#define GET_CSP_FROM_MBUF(x) ((conn_sub_t *)((x)->dynfield1[RTE_MBUF_CONN_SUB]))
-#define SET_CSP_TO_MBUF(x, csp)   (*((uint64_t *)&(x)->dynfield1[RTE_MBUF_FLOW_CONNECTION]) = (csp))
+#define GET_CSP_FROM_MBUF(x) ((conn_sub_t *)*((uint64_t *)&((x)->dynfield1[RTE_MBUF_CONN_SUB])))
+#define SET_CSP_TO_MBUF(x, csp) \
+    do {                                                                                    \
+        if (flow_debug_flag & FLOW_DEBUG_BASIC) {                                           \
+            conn_sub_t *temp_csp = GET_CSP_FROM_MBUF(x);                                    \
+            flow_debug_trace_no_flag("  set csp to mbuf 0x%llx->0x%llx.\n", temp_csp, csp); \
+        }                                                                                   \
+        (*((uint64_t *)&(x)->dynfield1[RTE_MBUF_CONN_SUB]) = (uint64_t)(csp));              \
+    } while(0)
 #define GET_FC_FROM_MBUF(x) csp2base(GET_CSP_FROM_MBUF(x))
 
 /*----------------------------------------------*/
@@ -231,22 +295,113 @@ uint32_t ports, uint32_t token)
      * the lports, which is basically the src/dst port from pkt,
      * will also be in NBO */
     if (csp->csp_token == token &&
-        *(uint32_t *)&csp->src_port == ports &&
-        csp->src_ip == iphdr->src_addr &&
-        csp->dst_ip == iphdr->dst_addr &&
-        csp->proto == iphdr->next_proto_id)
+        *(uint32_t *)&csp->csp_src_port == ports &&
+        csp->csp_src_ip == iphdr->src_addr &&
+        csp->csp_dst_ip == iphdr->dst_addr &&
+        csp->csp_proto  == iphdr->next_proto_id)
         return 1;
 
     return 0;
 }
 
 enum {
-    FLOW_RET_ERR = -1,
-    FLOW_RET_OK  = 0,
+    /* something error */
+    FLOW_RET_ERR   = -1,
+    /* good to go next */
+    FLOW_RET_OK    = 0,
+    /* break through */
+    FLOW_RET_BREAK = 1,
+};
+
+/*
+ * return proper src port for udp/tcp
+ */
+static inline uint32_t ip_src_port (uint32_t ports)
+{
+    if (RTE_BYTE_ORDER == RTE_LITTLE_ENDIAN)
+        return ports & 0xffff;
+    else 
+        return ports >> 16;
+}
+/*
+ * return proper dst port for udp/tcp
+ */
+static inline uint32_t ip_dst_port (uint32_t ports)
+{
+    if (RTE_BYTE_ORDER == RTE_LITTLE_ENDIAN)
+        return ports >> 16;
+    else
+        return ports & 0xffff;
 }
 
-typedef int (* flow_vector_t)(rte_mbuf *mbuf);
+/*
+ * Endian safe way to form ports from src and dst ports.
+ */
+static inline uint32_t ip_ports_form(uint16_t src_port, uint16_t dst_port)
+{
+    if (RTE_BYTE_ORDER == RTE_LITTLE_ENDIAN)
+        return (dst_port << 16) | src_port;
+    else 
+        return (src_port << 16) | dst_port;
+}
 
-extern int flow_decap_vector(rte_mbuf *mbuf);
+extern void 
+flow_free_this_conn (flow_connection_t *fcp);
+extern int
+flow_init (void);
+int 
+icmp_ports (struct rte_icmp_hdr *icmp);
+struct rte_ipv4_hdr *
+gen_icmp_lookup_info (struct rte_ipv4_hdr *iphdr, uint32_t *iptr, struct rte_mbuf *mbuf, struct rte_ipv4_hdr *iphdr_inner, uint32_t *ports);
+int
+flow_proc_first_pak(struct rte_mbuf *mbuf);
+int
+flow_first_install_connection(struct rte_mbuf *mbuf);
+int 
+flow_find_connection(struct rte_mbuf *mbuf);
+int 
+flow_first_sanity_check(struct rte_mbuf *mbuf);
+int 
+flow_first_fcp_crt_init(struct rte_mbuf *mbuf, uint32_t ports);
+int
+flow_first_alloc_connection(struct rte_mbuf *mbuf);
+int 
+flow_first_hole_search(struct rte_mbuf *mbuf);
+int
+pak_to_my_addrs(struct rte_ipv4_hdr *iph, uint32_t id);
+int
+pak_for_self(struct rte_ipv4_hdr *iph, uint32_t *iptr);
+int
+flow_first_for_self(struct rte_mbuf *mbuf);
+int
+flow_first_routing(struct rte_mbuf *mbuf);
+int
+flow_first_fw_entry(struct rte_mbuf *mbuf);
+int
+flow_fast_reinject_out(struct rte_mbuf *mbuf);
+int
+flow_fast_fw_entry(struct rte_mbuf *mbuf);
+int
+flow_fast_send_out(struct rte_mbuf *mbuf);
+void
+flow_install_conn(flow_connection_t *fcp);
+int
+flow_filter_vector(struct rte_mbuf *mbuf);
+int
+flow_tunnel_handling(struct rte_mbuf *mbuf);
+int
+flow_decap_vector(struct rte_mbuf *mbuf);
+struct rte_mbuf *
+flow_gen_icmp_pak(uint8_t __rte_unused type, uint8_t __rte_unused code);
+int
+flow_send_return_pak(struct rte_mbuf *mbuf);
+int
+flow_drop_packet(struct rte_mbuf *mbuf);
+int 
+flow_main_body_vector (struct rte_mbuf *mbuf);
+int
+flow_handle_other_queue(void);
+int
+flow_processing_paks(struct rte_mbuf *mbuf);
 
-#endif /* __DPVS_FLOW_H__ */
+#endif /* __TYFLOW_FLOW_H__ */

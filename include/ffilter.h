@@ -35,16 +35,19 @@ extern ffilter_ent_t ffilter_ent[];
 RTE_DECLARE_PER_LCORE(uint32_t, ffilter_show_this_pak);
 #define this_ffilter_show_this_pak (RTE_PER_LCORE(ffilter_show_this_pak))
 
+extern void flow_filter_init (void);
+
 extern void flow_mark_pak_func(struct rte_ipv4_hdr  *iphdr, uint32_t *iptr);
 
 /*
  * turn on debug for this packet if flow debug is on,
  * and packet matches filter conditions.
  */
-#define flow_mark_pak(iphdr,iptr)      do { \
-	ffilter_show_this_pak = 0; 					\
-	if (flow_debug_flag) {                      \
-		flow_mark_pak_func(iphdr,iptr);     \
-	}\
+#define flow_mark_pak(iphdr,iptr)   do { \
+	this_ffilter_show_this_pak = 0;      \
+	if (flow_debug_flag) {               \
+		flow_mark_pak_func(iphdr,iptr);  \
+	}                                    \
 }while (0)
+
 #endif /* _FFILTER_H */

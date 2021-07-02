@@ -611,6 +611,7 @@ int multicast_msg_send(struct dpvs_msg *msg, uint32_t flags, struct dpvs_multica
     delay = (uint64_t)g_msg_timeout * g_cycles_per_sec / 1000000;
     while(!(test_msg_flags(msg, (DPVS_MSG_F_STATE_FIN | DPVS_MSG_F_STATE_DROP)))) {
         if (start + delay < rte_get_timer_cycles()) {
+            assert(0);
             RTE_LOG(WARNING, MSGMGR, "%s:msg@%p, mcq(type:%d, cid:%d->slaves) timeout"
                     "(%d us), drop...\n", __func__, msg,
                     msg->type, msg->cid, g_msg_timeout);
@@ -1058,7 +1059,7 @@ static inline int msg_init(void)
     /* lcore mask init */
     slave_lcore_mask = 0;
     slave_lcore_nb = 0;
-    master_lcore = rte_get_master_lcore();
+    master_lcore = rte_get_main_lcore();
 
     netif_get_slave_lcores(&slave_lcore_nb, &slave_lcore_mask);
     if (slave_lcore_nb > MSG_MAX_LCORE_SUPPORTED) {

@@ -190,8 +190,8 @@ debug_trace_packet_mac(struct rte_mbuf *mbuf)
 void
 debug_trace_packet_ip(struct rte_mbuf *mbuf)
 {
-    void *ip = rte_pktmbuf_mtod_offset(mbuf, struct rte_ipv4_hdr *, sizeof(struct rte_ether_hdr));
-    debug_print_hex(ip, 40);
+    struct rte_ipv4_hdr *ip = rte_pktmbuf_mtod_offset(mbuf, struct rte_ipv4_hdr *, 0);
+    debug_print_hex((void *)ip, ntohs(ip->total_length));
 }
 
 void
@@ -224,6 +224,7 @@ show_debug_trace(cmd_blk_t *cbt)
     for (i=0; i<j; i++) {
         tyflow_cmdline_printf(cbt->cl, "%s", debug_global_buffer[i]);
     }
+    tyflow_cmdline_printf(cbt->cl, "total line %d\n", j);
     return 0;
 }
 

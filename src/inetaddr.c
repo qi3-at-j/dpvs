@@ -78,7 +78,8 @@ static uint32_t ifa_msg_seq(void)
     return counter++;
 }
 
-static inline struct inet_device *dev_get_idev(const struct netif_port *dev)
+extern struct inet_device *dev_get_idev(const struct netif_port *dev);
+struct inet_device *dev_get_idev(const struct netif_port *dev)
 {
     assert(dev && dev->in_ptr);
     rte_atomic32_inc(&dev->in_ptr->refcnt);
@@ -342,7 +343,10 @@ static uint32_t ifa_hash_key(int af, const union inet_addr *addr)
     return hash % INET_ADDR_HSIZE;
 }
 
-static struct inet_ifaddr *ifa_lookup(struct inet_device *idev,
+extern struct inet_ifaddr *ifa_lookup(struct inet_device *idev,
+                                      const union inet_addr *addr,
+                                      uint8_t plen, int af);
+struct inet_ifaddr *ifa_lookup(struct inet_device *idev,
                                       const union inet_addr *addr,
                                       uint8_t plen, int af)
 {

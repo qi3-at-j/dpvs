@@ -86,7 +86,7 @@ static portid_t port_id_end = 0;
 
 volatile bool force_quit;
 
-static uint16_t g_nports;
+uint16_t g_nports;
 
 #define NETIF_BOND_MODE_DEF     BONDING_MODE_ROUND_ROBIN
 
@@ -1277,10 +1277,10 @@ static void config_lcores(struct list_head *worker_list)
                 lcore_conf[id].pqs[tk].rxqs[ii].id = queue->rx_queues[ii];
 				printf("lcore_conf[%d].pqs[%d].rxqs[%d].id = %d\n", id, tk, ii, queue->rx_queues[ii]);
 
-				lcore_conf[id].rx_queue_list[ln].port_id = pid; //lcore_confÏÂ³õÊ¼»¯port-id
+				lcore_conf[id].rx_queue_list[ln].port_id = pid; //lcore_conf?Â³?Ê¼??port-id
 				snprintf(lcore_conf[id].rx_queue_list[ln].node_name, RTE_NODE_NAMESIZE, 
 					"ethdev_rx-%u-%u", pid, queue->rx_queues[ii]);
-				lcore_conf[id].rx_queue_list[ln++].queue_id = queue->rx_queues[ii]; //lcore_confÏÂ³õÊ¼»¯queue-id
+				lcore_conf[id].rx_queue_list[ln++].queue_id = queue->rx_queues[ii]; //lcore_conf?Â³?Ê¼??queue-id
 							/* Add this queue node to its graph */
                 if (queue->isol_rxq_lcore_ids[ii] != NETIF_LCORE_ID_INVALID) {
                     if (isol_rxq_add(queue->isol_rxq_lcore_ids[ii],
@@ -1308,7 +1308,7 @@ static void config_lcores(struct list_head *worker_list)
         }
 		printf("lcore_conf[%d].nports = %d\n", id, tk);
         lcore_conf[id].nports = tk;
-		lcore_conf[id].n_rx_queue = ln; //Í³¼ÆÔÚ¸ÃlcoreÏÂµÄËùÓÐ½ÓÊÕ¶ÓÁÐÊý¡£
+		lcore_conf[id].n_rx_queue = ln; //Í³???Ú¸?lcore?Âµ????Ð½??Õ¶???????
         id++;
 
         list_move_tail(&worker_min->worker_list_node, worker_list);
@@ -1322,12 +1322,12 @@ portid_t port2index[DPVS_MAX_LCORE][NETIF_MAX_PORTS];
 
 static void lcore_index_init(void)
 {
-	/*lcore2index[0]³õÊ¼»¯ÎÞÐ§ÊÇÒòÎªµÚÒ»¸öÍ¨³£ÊÇmaster¡£
-	ÀýÈç
+	/*lcore2index[0]??Ê¼????Ð§????Îª??Ò»??Í¨????master??
+	????
 	lcore_id :  0 1 2 3 4 5 6
 	index :     7 0 1 2 3 4 5 7 
-	Òò´Ë£¬lcore_conf[0]±£´æµÄÊÇlcore_idÎª1Ïß³ÌµÄÖµ
-	      lcore_conf[1]±£´æµÄÊÇlcore_idÎª2Ïß³ÌµÄÖµ
+	???Ë£?lcore_conf[0]????????lcore_idÎª1?ß³Ìµ?Öµ
+	      lcore_conf[1]????????lcore_idÎª2?ß³Ìµ?Öµ
 	*/
     lcoreid_t ii;
     int tk = 0;
@@ -1384,7 +1384,7 @@ void netif_get_slave_lcores(uint8_t *nb, uint64_t *mask)
     while (lcore_conf[i].nports > 0) {
         /* LCORE_ROLE_KNI_WORKER should be excluded,
          * as ports is configured for KNI core.
-         Ó¦¸ÃÅÅ³ýLCORE_ROLE_KNI_WORKER£¬ÒòÎª¶Ë¿ÚÊÇÎªKNI coreÅäÖÃµÄ¡£ */
+         Ó¦???Å³?LCORE_ROLE_KNI_WORKER????Îª?Ë¿???ÎªKNI core???ÃµÄ¡? */
         if (lcore_conf[i].type == LCORE_ROLE_FWD_WORKER) {
             slave_lcore_nb++;
             slave_lcore_mask |= (1L << lcore_conf[i].id);
@@ -1536,13 +1536,13 @@ netif_init_graph_need_to_create(void)
 		qconf = &lcore_conf[lcore_id];
 		/* Alloc a graph to this lcore only if source exists  */
 		if ((qconf->type == LCORE_ROLE_FWD_WORKER)&&(qconf->n_rx_queue))
-			nb_graphs++;//Õâ¸öÓ¦¸ÃÊÇlcoreµÄ¸öÊý
+			nb_graphs++;//????Ó¦????lcore?Ä¸???
 	}
 
 	printf("graph number to create : %d\n", nb_graphs);
 }
 
-//¾­netif_init_graph_need_to_create³õÊ¼»¯È«¾Ö±äÁ¿nb_graphs·½¿ÉÓÃ
+//??netif_init_graph_need_to_create??Ê¼??È«?Ö±?Á¿nb_graphs??????
 uint16_t 
 netif_get_graph_need_to_create(void)
 {
@@ -1574,11 +1574,11 @@ init_rte_node_ethdev_config(portid_t pid){
 	dev = netif_port_get(pid);
 	if(dev){
 		ethdev_conf[nb_conf].mp = pktmbuf_pool[0];
-		ethdev_conf[nb_conf].mp_count = 1;	//ÔÝÊ±ÏÈÐ´ËÀ
+		ethdev_conf[nb_conf].mp_count = 1;	//??Ê±??Ð´??
 	}
 
 	
-	nb_conf++;//¿É¼û¸ÃÖµÊÇÍø¿¨µÄ¸öÊý
+	nb_conf++;//?É¼???Öµ???????Ä¸???
 
 	printf("nb_conf is %d\n", nb_conf);
 	return;
@@ -1620,7 +1620,7 @@ init_graph_for_per_slave_core(void)
 
 		qconf = &lcore_conf[lcore_id];
 
-		/* Skip graph creation if no source exists & ²»ÊÇ×ª·¢ºËÂÔ¹ý*/
+		/* Skip graph creation if no source exists & ????×ª?????Ô¹?*/
 		if (!qconf->n_rx_queue || LCORE_ROLE_FWD_WORKER != qconf->type)
 			continue;
 
@@ -1650,7 +1650,7 @@ init_graph_for_per_slave_core(void)
 		qconf->graph = rte_graph_lookup(qconf->name);
 		if (!qconf->graph)
 			rte_exit(EXIT_FAILURE, "rte_graph_lookup(): graph %s not found\n",  qconf->name);
-		//æ‰“å°å›¾ä¸‹é¢çš„æ‰€æœ‰èŠ‚ç‚¹ï¼Œä»¥åŠä»–çš„è¾?		rte_graph_node_printf(qconf->graph, true);
+		//æ‰“å°å›¾ä¸‹é¢çš„æ‰€æœ‰èŠ‚ç‚¹ï¼Œä»¥åŠä»–çš„???		rte_graph_node_printf(qconf->graph, true);
 	}
 
 	/* Add route to ip4 graph infra 
@@ -2032,15 +2032,13 @@ static inline uint16_t netif_rx_burst(portid_t pid, struct netif_queue_conf *qco
          * processing lcore ? No! we just leave the work to tools */
     } else {
         nrx = rte_eth_rx_burst(pid, qconf->id, qconf->mbufs, NETIF_MAX_PKT_BURST);
-        if (nrx) {
-            flow_debug_trace(FLOW_DEBUG_BASIC, " receive %d packets\n", nrx);
-            flow_debug_packet(1, qconf->mbufs[0]);
-        }
 
 #ifdef CONFIG_DPVS_NETIF_DEBUG
 		if (nrx) {
 			RTE_LOG(WARNING, NETIF, "%s: received %d packets!\n", __func__, nrx);
 			RTE_LOG(WARNING, NETIF, "\tprint the first packet:\n");
+            flow_debug_trace(FLOW_DEBUG_BASIC, " receive %d packets\n", nrx);
+            flow_debug_packet(1, qconf->mbufs[0]);
 			void *mac = rte_pktmbuf_mtod_offset(qconf->mbufs[0], struct ether_hdr*, 0);
 			rte_print_hex(54, mac);
 			parse_ipv4_hdr(qconf->mbufs[0], 0, 0);
@@ -2638,7 +2636,6 @@ static inline int netif_deliver_mbuf(struct rte_mbuf *mbuf,
     assert(mbuf->port <= NETIF_MAX_PORTS);
     assert(dev != NULL);
 
-    flow_debug_trace(FLOW_DEBUG_BASIC, "%s: entry", __FUNCTION__);
     pt = pkt_type_get(eth_type, dev);
 
     if (NULL == pt) {
@@ -2669,9 +2666,9 @@ static inline int netif_deliver_mbuf(struct rte_mbuf *mbuf,
                      || (i == rte_get_master_lcore()))
                     continue;
                 /*rte_pktmbuf_clone will not clone pkt.data, just copy pointer!*/
-				//´Ë´¦»¹¿ÉÒÔÓÅ»¯£¬±ÈÈçarp_ringËùÔÚµÄlcoreÈç¹û²»ÊÇºÍ±¾µØlcoreÔÚÒ»¸ösocketÉÏµÄ»°
-				//»áÓÐ¿çºË·ÃÎÊµÄÊÂÇé·¢Éú¡£µ«ÊÇ¼´Ê¹´Ë´¦mbuf_poolÓÃµÄÊÇringËùÔÚµÄsocket£¬ÕâÔÚÉêÇëÄÚ´æµÄ
-				//Ê±ºò¾Í¿çsocketÁË£¬ËùÒÔÊÇ²»¿ÉÒÔ±ÜÃâµÄÂð£¿£¿
+				//?Ë´????????Å»???????arp_ring???Úµ?lcore???????ÇºÍ±???lcore??Ò»??socket?ÏµÄ»?
+				//???Ð¿??Ë·??Êµ????é·¢?ú¡£µ«?Ç¼?Ê¹?Ë´?mbuf_pool?Ãµ???ring???Úµ?socket???????????Ú´???
+				//Ê±???Í¿?socket?Ë£??????Ç²????Ô±??????ð£¿£?
                 mbuf_clone = rte_pktmbuf_clone(mbuf, mbuf_pool);
                 if (mbuf_clone) {
                     int ret = rte_ring_enqueue(arp_ring[i], mbuf_clone);
@@ -2697,7 +2694,12 @@ static inline int netif_deliver_mbuf(struct rte_mbuf *mbuf,
         return EDPVS_INVPKT;
     }
 
-    err = pt->func(mbuf, dev);
+    /* let ipv4 go through flow */
+    if (pt->type == rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4)) {
+        err = flow_processing_paks(mbuf);
+    } else {
+        err = pt->func(mbuf, dev);
+    }
 
     if (err == EDPVS_KNICONTINUE) {
         if (pkts_from_ring || forward2kni) {
@@ -2847,12 +2849,10 @@ static void lcore_process_redirect_ring(struct netif_queue_conf *qconf, lcoreid_
 static void lcore_job_recv_fwd(void *arg)
 {
     int i, j;
+    int k;
     portid_t pid;
     lcoreid_t cid;
     struct netif_queue_conf *qconf;
-
-	//æš‚æ—¶å…ˆåŽ»æŽ‰è¿™éƒ¨åˆ†åŠŸèƒ½ï¼Œç”¨å›¾èŠ‚ç‚¹æŽ¥æ”¶
-	return;
 
     cid = rte_lcore_id();
     assert(LCORE_ID_ANY != cid);

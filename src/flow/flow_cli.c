@@ -15,6 +15,7 @@
  */
 
 #include <unistd.h>
+#include <stdint.h>
 #include <fcntl.h>
 #include <assert.h>
 #include <netinet/in.h>
@@ -41,14 +42,16 @@
 #include <rte_arp.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <ipvs/redirect.h>
 
+#include "global_data.h"
 #include "parser/flow_cmdline_parse.h"
 #include "parser/flow_cmdline.h"
 #include "debug_flow.h"
+#include "flow_cli.h"
 
+show_flow_ctx_t show_flow_ctx;
 static inline uint32_t
-flow_get_total_connection()
+flow_get_total_connection(void)
 {
     return this_flow_curr_conn;
 }
@@ -68,37 +71,37 @@ show_one_flow_connection (flow_connection_t *fcp, void *args)
      * we may support showing connection by vrf, check the token here
 	 */
 	
-	tyflow_cmdline_printf(cbt->cl, " id %d,flag 0x%x,time %lld, reason %d\n",
+	tyflow_cmdline_printf(cbt->cl, "   id %d,flag 0x%x,time %lu, reason %d\n",
 			              (fcp2id(fcp)),
                           fcp->fcflag,
                           fcp->start_time,
                           fcp->reason);
 	
 	csp = &fcp->conn_sub0;
-    inet_ntop(AF_INET, &csp->src_ip, saddr, sizeof(saddr));
-    inet_ntop(AF_INET, &csp->dst_ip, daddr, sizeof(daddr));
-    tyflow_cmdline_printf(cbt->cl, "  if %d(cspflag 0x%x): %s/%d->%s/%d, %d, vrf %d, route %d, packets/bytes %lld/%lld",
-                          (uint32_t)csp->ifp, csp->cspflag,
-                          saddr, csp->src_port,
-                          daddr, csp->dst_port,
-                          csp->proto, csp->csp_token,
-                          (uint32_t)csp->route,
+    inet_ntop(AF_INET, &csp->csp_src_ip, saddr, sizeof(saddr));
+    inet_ntop(AF_INET, &csp->csp_dst_ip, daddr, sizeof(daddr));
+    tyflow_cmdline_printf(cbt->cl, "      if 0x%lx(cspflag 0x%x): %s/%d->%s/%d, %d, vrf %d, route 0x%lx, packets/bytes %lu/%lu",
+                          (uint64_t)csp->ifp, csp->cspflag,
+                          saddr, csp->csp_src_port,
+                          daddr, csp->csp_dst_port,
+                          csp->csp_proto, csp->csp_token,
+                          (uint64_t)csp->route,
                           csp->pkt_cnt, csp->byte_cnt);
-	if(csp->proto == IPPROTO_TCP){
+	if(csp->csp_proto == IPPROTO_TCP){
 		tyflow_cmdline_printf(cbt->cl, ",wsf %d",csp->wsf);/*wsf sync*/
 	}
 
 	csp = &fcp->conn_sub1;
-    inet_ntop(AF_INET, &csp->src_ip, saddr, sizeof(saddr));
-    inet_ntop(AF_INET, &csp->dst_ip, daddr, sizeof(daddr));
-    tyflow_cmdline_printf(cbt->cl, "  if %d(cspflag 0x%x): %s/%d->%s/%d, %d, vrf %d, route %d, packets/bytes %lld/%lld",
-                          (uint32_t)csp->ifp, csp->cspflag,
-                          saddr, csp->src_port,
-                          daddr, csp->dst_port,
-                          csp->proto, csp->csp_token,
-                          (uint32_t)csp->route,
+    inet_ntop(AF_INET, &csp->csp_src_ip, saddr, sizeof(saddr));
+    inet_ntop(AF_INET, &csp->csp_dst_ip, daddr, sizeof(daddr));
+    tyflow_cmdline_printf(cbt->cl, "      if 0x%lx(cspflag 0x%x): %s/%d->%s/%d, %d, vrf %d, route 0x%lx, packets/bytes %lu/%lu",
+                          (uint64_t)csp->ifp, csp->cspflag,
+                          saddr, csp->csp_src_port,
+                          daddr, csp->csp_dst_port,
+                          csp->csp_proto, csp->csp_token,
+                          (uint64_t)csp->route,
                           csp->pkt_cnt, csp->byte_cnt);
-	if(csp->proto == IPPROTO_TCP){
+	if(csp->csp_proto == IPPROTO_TCP){
 		tyflow_cmdline_printf(cbt->cl, ",wsf %d",csp->wsf);/*wsf sync*/
 	}
 }
@@ -119,7 +122,7 @@ select_this_connection(flow_connection_t *fcp,
  	mask = paras->mask;
 
 	if (mask & CLR_GET_CONN_FCFLAG) {
-		if ((paras->fcflag & fcp->natflag) != paras->fcflag) 
+		if ((paras->fcflag & fcp->fcflag) != paras->fcflag) 
             return 0;
 	}
 
@@ -135,50 +138,50 @@ select_this_connection(flow_connection_t *fcp,
     }
 
 	if (mask & CLR_GET_CONN_SRCIP_MASK) {
-        if (paras->src_ip != (csp->src_ip & paras->src_mask))
+        if (paras->src_ip != (csp->csp_src_ip & paras->src_mask))
             return 0;
 	}
 	else if (mask & CLR_GET_CONN_SRCIP) {
-        if (paras->src_ip != nsp->src_ip)
+        if (paras->src_ip != csp->csp_src_ip)
             return 0;
     }
 
 	if (mask & CLR_GET_CONN_DESIP_MASK) {
-        if (paras->dst_ip != (csp->dst_ip & paras->dst_mask))
+        if (paras->dst_ip != (csp->csp_dst_ip & paras->dst_mask))
             return 0;
 	}
 	else if (mask & CLR_GET_CONN_DESIP) {
-        if (paras->dst_ip != csp->dst_ip)
+        if (paras->dst_ip != csp->csp_dst_ip)
             return 0;
     }
 
 	if (mask & CLR_GET_CONN_PROTOCOL_HIGH) {
-		if (paras->protocol_low > csp->proto ||
-            paras->protocol_high < csp->proto)
+		if (paras->protocol_low > csp->csp_proto ||
+            paras->protocol_high < csp->csp_proto)
             return 0;
     }
 	else if (mask & CLR_GET_CONN_PROTOCOL_LOW) {
-        if (paras->protocol_low != csp->proto)
+        if (paras->protocol_low != csp->csp_proto)
             return 0;
     }
 
 	if (mask & CLR_GET_CONN_SRCPORT_HIGH) {
-		if (ntohs(paras->srcport_low) > ntohs(csp->src_port) ||
-			ntohs(paras->srcport_high) < ntohs(csp->src_port))
+		if (ntohs(paras->srcport_low) > ntohs(csp->csp_src_port) ||
+			ntohs(paras->srcport_high) < ntohs(csp->csp_src_port))
 			return 0;
 	}
 	else if (mask & CLR_GET_CONN_SRCPORT_LOW) {
-		if (paras->srcport_low != csp->src_port)
+		if (paras->srcport_low != csp->csp_src_port)
 			return 0;
 	}
 
 	if (mask & CLR_GET_CONN_DESPORT_HIGH) {
-		if (ntohs(paras->dstport_low) > ntohs(csp->dst_port) ||
-			ntohs(paras->dstport_high) < ntohs(csp->dst_port))
+		if (ntohs(paras->dstport_low) > ntohs(csp->csp_dst_port) ||
+			ntohs(paras->dstport_high) < ntohs(csp->csp_dst_port))
             return 0;
 	}
 	else if (mask & CLR_GET_CONN_DESPORT_LOW){
-		if (paras->dstport_low != csp->dst_port)
+		if (paras->dstport_low != csp->csp_dst_port)
             return 0;
     }
 
@@ -190,6 +193,18 @@ select_this_connection(flow_connection_t *fcp,
 	}
 
 	return 1; /* select this connection */
+}
+
+static int
+_try_reschedule(void)
+{
+    return 0;
+}
+
+static int
+page_stop(void)
+{
+    return 0;
 }
 
 /*
@@ -237,15 +252,36 @@ done:
  * show all local flow connections, return count.
  * we need to filter them if required.
  */
-static uint32_t 
-show_flow_connection(connection_op_para_t *paras, void *args)
+uint32_t 
+show_flow_connection(show_flow_ctx_t *ctx)
 {
-	int rc;
+    tyflow_cmdline_printf((struct cmdline *)ctx->cbt, "  lcore%d:\n", rte_lcore_id());
 
 	/* traverse all connections. */
-	rc = traverse_all_flow_connection(paras, args, show_one_flow_connection);
+	ctx->number = traverse_all_flow_connection(ctx->paras, ctx->cbt, show_one_flow_connection);
+    tyflow_cmdline_printf((struct cmdline *)ctx->cbt, "  total number on lcore%d: %d\n", rte_lcore_id(), ctx->number);
+    ctx->cid = 0;
 
-	return(rc);
+	return(ctx->number);
+}
+
+static uint32_t 
+show_flow_connection_all(connection_op_para_t *paras, void *args)
+{
+	int rc, i;
+
+    memset(&show_flow_ctx, 0, sizeof(show_flow_ctx));
+    rc = 0;
+    RTE_LCORE_FOREACH_WORKER(i) {
+        if (g_lcore_role[i] == LCORE_ROLE_FWD_WORKER) {
+            show_flow_ctx.cid = i;
+            show_flow_ctx.cbt = args;
+            show_flow_ctx.paras = paras;
+            while(!!show_flow_ctx.cid);
+            rc += show_flow_ctx.number;
+        }
+    }
+    return rc;
 }
 
 static int
@@ -254,13 +290,13 @@ show_flow_connection_cli(cmd_blk_t *cbt)
     connection_op_para_t paras;
     int rc;
 
-    tyflow_cmdline_printf(cbt->cl, "flow connection on lcore %d:\n", rte_lcore_id());
+    tyflow_cmdline_printf(cbt->cl, "flow connections:\n");
     switch(cbt->which[0]) {
         case 1:
             tyflow_cmdline_printf(cbt->cl, "total connection: %d\n", flow_get_total_connection());
             break;
         case 2:
-            rc = show_flow_connection(NULL, (void *)cbt);
+            rc = show_flow_connection_all(NULL, (void *)cbt);
             tyflow_cmdline_printf(cbt->cl, "total number %d\n", rc);
             break;
         case 3:

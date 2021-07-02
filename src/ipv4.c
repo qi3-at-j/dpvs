@@ -27,6 +27,7 @@
 #include "icmp.h"
 #include "parser/parser.h"
 #include "iftraf.h"
+#include "flow.h"
 
 #define IPV4
 #define RTE_LOGTYPE_IPV4    RTE_LOGTYPE_USER1
@@ -216,9 +217,14 @@ static int ipv4_local_in(struct rte_mbuf *mbuf)
             netif_port_get(mbuf->port), NULL, ipv4_local_in_fin);
 }
 
-static int ipv4_output_fin2(struct rte_mbuf *mbuf)
+int ipv4_output_fin2(struct rte_mbuf *mbuf)
 {
+#if 1
+    conn_sub_t *csp = GET_CSP_FROM_MBUF(mbuf);
+    struct route_entry *rt = csp2peer(csp)->route;
+#else
     struct route_entry *rt = mbuf_userdata_get(mbuf);
+#endif
     int err;
     struct in_addr nexthop;
 

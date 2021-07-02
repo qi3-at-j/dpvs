@@ -1,11 +1,10 @@
-
 #include <unistd.h>
 #include <stdint.h>
 #include "parser/flow_cmdline_parse.h"
 #include "parser/flow_cmdline.h"
 #include "debug_flow.h"
 
-uint32_t flow_debug_flag;
+uint32_t flow_debug_flag = FLOW_DEBUG_ALL;
 
 static int
 debug_flow_cli(cmd_blk_t *cbt)
@@ -57,6 +56,19 @@ debug_flow_cli(cmd_blk_t *cbt)
             break;
         case 4:
             if (cbt->mode & MODE_DO) {
+                if (!(flow_debug_flag & FLOW_DEBUG_DETAIL)) {
+                    printf("flow detail debug is enabled\n");
+                    flow_debug_flag |= FLOW_DEBUG_DETAIL;
+                }
+            } else if (cbt->mode & MODE_UNDO) {
+                if (flow_debug_flag & FLOW_DEBUG_DETAIL) {
+                    printf("flow detail debug is disabled\n");
+                    flow_debug_flag &= ~FLOW_DEBUG_DETAIL;
+                }
+            }
+            break;
+        case 5:
+            if (cbt->mode & MODE_DO) {
                 if ((flow_debug_flag & FLOW_DEBUG_ALL) != FLOW_DEBUG_ALL) {
                     printf("flow all debug is enabled\n");
                     flow_debug_flag |= FLOW_DEBUG_ALL;
@@ -75,8 +87,9 @@ debug_flow_cli(cmd_blk_t *cbt)
 }
 
 EOL_NODE(debug_flow_eol, debug_flow_cli);
-KW_NODE_WHICH(flow_all, debug_flow_eol, none, "all", "enable/disable flow all debug", 1, 4);
-KW_NODE_WHICH(flow_packet, debug_flow_eol, flow_all, "packet", "enable/disable flow packet debug", 1, 3);
+KW_NODE_WHICH(flow_all, debug_flow_eol, none, "all", "enable/disable flow all debug", 1, 5);
+KW_NODE_WHICH(flow_detail, debug_flow_eol, flow_all, "detail", "enable/disable flow detail debug", 1, 4);
+KW_NODE_WHICH(flow_packet, debug_flow_eol, flow_detail, "packet", "enable/disable flow packet debug", 1, 3);
 KW_NODE_WHICH(flow_event, debug_flow_eol, flow_packet, "event", "enable/disable flow event debug", 1, 2);
 KW_NODE_WHICH(flow_basic, debug_flow_eol, flow_event, "basic", "enable/disable flow basic debug", 1, 1);
 KW_NODE(debug_flow, flow_basic, none, "flow", "enable/disable flow related debug");
@@ -95,6 +108,8 @@ show_flow_cli(cmd_blk_t *cbt)
             tyflow_cmdline_printf(cbt->cl, "\t\tevent enabled.\n");
         if (flow_debug_flag & FLOW_DEBUG_PACKET)
             tyflow_cmdline_printf(cbt->cl, "\t\tpacket enabled.\n");
+        if (flow_debug_flag & FLOW_DEBUG_DETAIL)
+            tyflow_cmdline_printf(cbt->cl, "\t\tdetail enabled.\n");
     }
     return 0;
 }

@@ -1,5 +1,30 @@
+/*
+ * Copyright (C) 2021 TYyun.
+ * All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 
-#define number_2_mask(x) ((2<<(x)-1)<<(32-(x)))
+#ifndef __TYFLOW_FLOW_CLI_H__
+#define __TYFLOW_FLOW_CLI_H__
+
+#include <sys/types.h>
+#include <rte_mbuf.h>
+#include "conf/common.h"
+#include "conf/flow.h"
+#include "netif.h"
+#include "inet.h"
+#include "flow.h"
+
+#define number_2_mask(x) (((2<<(x))-1)<<(32-(x)))
 /*** used for get or clear connections ***/
 typedef struct connection_op_para_{
 
@@ -44,4 +69,16 @@ typedef struct connection_op_para_{
 	uint32_t policy_id;
 } connection_op_para_t;
 
+typedef struct {
+    volatile lcoreid_t cid;
+    uint32_t  number;
+    void      *cbt; /* cmd_blk_t */
+    connection_op_para_t *paras;
+} show_flow_ctx_t;
+
 typedef void (* selected_connection_vector_t)(flow_connection_t *, void *);
+uint32_t 
+show_flow_connection(show_flow_ctx_t *ctx);
+extern show_flow_ctx_t show_flow_ctx;
+
+#endif /* __TYFLOW_FLOW_CLI_H__ */

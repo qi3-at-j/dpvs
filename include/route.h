@@ -61,11 +61,22 @@ int route_term(void);
 
 int route_flush(void);
 
+#define ROUTE_ENTRY_NUMBER 128
+extern struct route_entry g_route_entry_pool[];
+extern uint8_t route_entry_state[];
+static void
+free_rt_to_pool(struct route_entry *route)
+{
+    int i = route-g_route_entry_pool;
+    route_entry_state[i] = 0;
+}
+
 static inline void route4_put(struct route_entry *route)
 {
     if(route){
         if (rte_atomic32_dec_and_test(&route->refcnt)) {
-            rte_free(route);
+            //rte_free(route);
+            free_rt_to_pool(route);
         }
     }
 }
