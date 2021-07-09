@@ -92,23 +92,28 @@ RTE_DEFINE_PER_LCORE(struct hlist_head * /* conn_sub_t** */, flow_conn_hash_base
 /* per lcore flow connection hash cnt table base */
 RTE_DEFINE_PER_LCORE(uint32_t *, flow_conn_hash_cnt_base);
 
-/* per lcore flow connection statistics */
-RTE_DEFINE_PER_LCORE(uint32_t, flow_curr_conn);
-RTE_DEFINE_PER_LCORE(uint32_t, flow_invalid_conn);
-RTE_DEFINE_PER_LCORE(uint32_t, flow_no_conn);
-RTE_DEFINE_PER_LCORE(uint32_t, flow_free_conn);
-
 /* flow is ready to go? */
 RTE_DEFINE_PER_LCORE(uint32_t, flow_status);
 
 /* per lcore flow connection ager */
 RTE_DEFINE_PER_LCORE(struct rte_timer, flow_conn_ager);
+/* per lcore flow connection ager hash tab */
+RTE_DEFINE_PER_LCORE(struct hlist_head *, flow_conn_ager_hash);
+/* per lcore flow connection ager index */
+RTE_DEFINE_PER_LCORE(uint32_t, flow_conn_ager_index);
 
 /* per lcore flow vector list */
 RTE_DEFINE_PER_LCORE(flow_vector_t *, flow_vector_list);
 
 /* per lcore flow connection control prototype */
 RTE_DEFINE_PER_LCORE(flow_connection_t, flow_conn_crt_t);
+
+/* per lcore flow connection statistics */
+RTE_DEFINE_PER_LCORE(uint32_t, flow_curr_conn);
+RTE_DEFINE_PER_LCORE(uint32_t, flow_invalid_conn);
+RTE_DEFINE_PER_LCORE(uint32_t, flow_no_conn);
+RTE_DEFINE_PER_LCORE(uint32_t, flow_free_conn);
+RTE_DEFINE_PER_LCORE(name_n_cnt, flow_counter);
 
 /*
  * Clean up leftovers in conn_sub_t block.
@@ -119,8 +124,12 @@ RTE_DEFINE_PER_LCORE(flow_connection_t, flow_conn_crt_t);
 static void 
 init_conn_sub (conn_sub_t *csp)
 {
+    if (csp->route) {
+        route4_put(csp->route);
+    }
 	memset((void*)&csp->start,0,sizeof(conn_sub_t)-offsetof(conn_sub_t, start));
-	csp->cspflag = CSP_FREE | CSP_INVALID;
+	csp->cspflag = CSP_FREE;
+    set_csp_invalid(csp);
 }
 
 /*
@@ -136,6 +145,7 @@ flow_free_conn_into_free_pool(flow_connection_t *fcp)
 	lifo_enqueue(&this_flowConnHead, fcp, offset);
 
 	this_flow_curr_conn--;
+	this_flow_free_conn++;
 }
 /*
  * this function initializes the flow connection before put it back
@@ -184,7 +194,233 @@ flow_free_this_conn (flow_connection_t *fcp)
     flow_free_conn_into_free_pool(fcp);
 }
 
+/*
+ * hash packet for flow conn_sub_t.
+ * need to tune it in accordance with the real traffic
+ */
+static inline uint32_t _conn_hash (uint32_t s, uint32_t d, uint32_t p)
+{
+	register uint32_t a;
+	register uint32_t m = 0xffff; /* mask for a short int */
+
+	a = ((s>>16) ^ ((s<<8)&m));
+	a = a ^ ((d>>15) ^ ((d<<7)&m));
+	a = a ^ ((p>>16) ^ ((p<<8)&m));
+	
+	return a;
+}
+
+static inline int conn_hash (uint32_t s, uint32_t d, uint32_t p)
+{
+	return (_conn_hash(s, d, p) & FLOW_CONN_HASH_TAB_MASK);
+}
+
+static inline void 
+set_fcp_ageout_time(flow_connection_t *fcp, uint16_t time)
+{
+    if(fcp->fcflag & FC_INVALID) {
+        flow_debug_trace(FLOW_DEBUG_EVENT, 
+                         "Trying to set the timeout for invalid connection id %d to %d\n", 
+                         fcp2id(fcp), time);
+    } else if (fcp->fcflag & FC_TIME_NO_REFRESH) {
+        flow_debug_trace(FLOW_DEBUG_EVENT, 
+                         "Trying to set the timeout for no-fresh connection id %d to %d\n", 
+                         fcp2id(fcp), time);
+    } else {
+        fcp->time = time;
+    }
+}
+
+uint16_t
+flow_get_fcp_time(flow_connection_t *fcp)
+{
+    return (fcp->time >= this_flow_conn_ager_index)?
+           (fcp->time-this_flow_conn_ager_index):
+           (fcp->time+FLOW_CONN_MAXTIMEOUT-this_flow_conn_ager_index);
+}
+
+static uint16_t
+add_fcp_to_ager(flow_connection_t *fcp, uint16_t timeout)
+{
+    uint16_t index;
+    assert(fcp != this_flow_conn_crt);
+    index = this_flow_conn_ager_index+timeout;
+    if (index >= FLOW_CONN_MAXTIMEOUT) {
+        index = index-FLOW_CONN_MAXTIMEOUT;
+    }
+    hlist_add_head(&fcp->ager_node, this_flow_conn_ager_hash+index);
+    fcp->fcflag |= FC_IN_AGER;
+    flow_debug_trace(FLOW_DEBUG_EVENT, "add fcp %d to ager %d\n", fcp2id(fcp), index);
+    return index;
+}
+
+/*
+ * refreshed a connection's time to time_const
+ * meanwhile update the connection position in ager
+ */
+void 
+flow_refresh_connection(flow_connection_t *fcp)
+{
+    uint16_t index;
+
+    if (fcp->fcflag & FC_TIME_NO_REFRESH) {
+        return;
+    }
+    if (fcp->fcflag & FC_IN_AGER) {
+        hlist_del(&fcp->ager_node);
+    }
+    index = add_fcp_to_ager(fcp, fcp->time_const);
+    set_fcp_ageout_time(fcp, index);
+}
+
+static void
+add_to_conn_hash(conn_sub_t *csp)
+{
+	int hash_value;
+    uint32_t cnt;
+	flow_connection_t *fcp = csp2base(csp);
+
+    clr_csp_invalid(csp);
+	hash_value = conn_hash(csp->csp_src_ip, csp->csp_dst_ip, *(uint32_t *)&csp->csp_src_port);
+
+    hlist_add_head(&csp->hnode, this_flow_conn_hash_base+hash_value);
+    cnt = *(this_flow_conn_hash_cnt_base+hash_value);
+    *(this_flow_conn_hash_cnt_base+hash_value) = cnt+1;
+    if (flow_debug_flag & FLOW_DEBUG_BASIC) {
+        char saddr[16], daddr[16];
+        inet_ntop(AF_INET, &csp->csp_src_ip, saddr, sizeof(saddr));
+        inet_ntop(AF_INET, &csp->csp_dst_ip, daddr, sizeof(daddr));
+        flow_print("++ csp add %d(0x%llx): %s/%d->%s/%d,%d, time %d, cspflag 0x%x\n",
+                   hash_value, csp, 
+                   saddr, ntohs(csp->csp_src_port),
+                   daddr, ntohs(csp->csp_dst_port),
+                   csp->csp_proto, fcp->time, csp->cspflag);
+    }
+}
+
+static void
+del_from_conn_hash(conn_sub_t *csp)
+{
+	int hash_value;
+    uint32_t cnt;
+	flow_connection_t *fcp = csp2base(csp);
+
+    hlist_del(&csp->hnode);
+	hash_value = conn_hash(csp->csp_src_ip, csp->csp_dst_ip, *(uint32_t *)&csp->csp_src_port);
+    cnt = *(this_flow_conn_hash_cnt_base+hash_value);
+    *(this_flow_conn_hash_cnt_base+hash_value) = cnt-1;
+    if (flow_debug_flag & FLOW_DEBUG_EVENT) {
+        char saddr[16], daddr[16];
+        inet_ntop(AF_INET, &csp->csp_src_ip, saddr, sizeof(saddr));
+        inet_ntop(AF_INET, &csp->csp_dst_ip, daddr, sizeof(daddr));
+        flow_debug_trace_no_flag("-- csp del %d(0x%llx): %s/%d->%s/%d,%d, time %d, cspflag 0x%x\n",
+                                 hash_value, csp, 
+                                 saddr, ntohs(csp->csp_src_port),
+                                 daddr, ntohs(csp->csp_dst_port),
+                                 csp->csp_proto, flow_get_fcp_time(fcp), csp->cspflag);
+    }
+}
+
+void
+set_fcp_invalid(flow_connection_t *fcp, uint32_t reason)
+{
+    uint16_t index;
+
+    flow_debug_trace(FLOW_DEBUG_EVENT, "%s: fcp: %d, reason: %d\n", __FUNCTION__, fcp2id(fcp), reason);
+    if (fcp->fcflag & FC_IN_AGER) {
+        hlist_del(&fcp->ager_node);
+    }
+
+    /* free the flow connection in 2 seconds */
+    index = add_fcp_to_ager(fcp, 1);
+    set_fcp_ageout_time(fcp, index);
+
+    fcp->fcflag |= FC_INVALID;
+    this_flow_invalid_conn++;
+    fcp->reason = FC_CLOSE_AGEOUT;
+    fcp->duration = (rte_get_tsc_cycles()-fcp->start_time)/g_cycles_per_sec;
+
+    /* remove the two csp from hash */
+    del_from_conn_hash(&fcp->conn_sub0);
+    del_from_conn_hash(&fcp->conn_sub1);
+}
+
+static int is_flow_conn_init_log  = 1;
+static int is_flow_conn_close_log  = 1;
+static int
+need_log_for_connection(flow_connection_t *fcp)
+{
+    return 0;
+}
+
+static int
+gen_conn_log(flow_connection_t *fcp)
+{
+    return 0;
+}
+
+/*
+ * since flow is using per lcore connection table, we 
+ * can ignore the contend and release the fcp directly
+ */
+static void
+flow_ager_service(__rte_unused struct rte_timer *tim, __rte_unused void *arg)
+{
+    flow_connection_t *fcp;
+    struct hlist_node *n;
+    int invalid = 0, free = 0;
+
+    flow_debug_trace(FLOW_DEBUG_EVENT, "%s: start ager %d\n", 
+                     __FUNCTION__, this_flow_conn_ager_index);
+    hlist_for_each_entry_safe(fcp, n, this_flow_conn_ager_hash+this_flow_conn_ager_index, ager_node) {
+        if (fcp->fcflag & FC_INVALID) {
+            /*
+             * Generate flow connection close log
+             */
+            if (is_flow_conn_close_log) {
+                if (need_log_for_connection(fcp)) {
+                    gen_conn_log(fcp);
+                }
+            }
+            free++;
+            flow_debug_trace(FLOW_DEBUG_EVENT, "  free the fcp: %d, duration: %lu\n", 
+                             fcp2id(fcp), fcp->duration);
+            flow_free_this_conn(fcp);
+        } else {
+            invalid++;
+            set_fcp_invalid(fcp, FC_CLOSE_AGEOUT);
+        }
+    }
+    this_flow_conn_ager_index++;
+    if (this_flow_conn_ager_index >= FLOW_CONN_MAXTIMEOUT) {
+        this_flow_conn_ager_index = 0;
+    }
+    flow_debug_trace(FLOW_DEBUG_EVENT, "ager finish invalid/free %d/%d, next %d\n", 
+                     invalid, free, this_flow_conn_ager_index);
+}
+
 extern uint64_t g_cycles_per_sec;
+static int
+flow_ager_init(lcoreid_t cid)
+{
+    this_flow_conn_ager_hash = (struct hlist_head *)rte_zmalloc("flow_conn_ager_hash", sizeof(struct hlist_head)*FLOW_CONN_MAXTIMEOUT, 0); 
+    if (!this_flow_conn_ager_hash) {
+        RTE_LOG(ERR, FLOW, "%s: no memory for flow conn ager hash\n",
+                __FUNCTION__);
+        return -1;
+    }
+
+
+    //dpvs_timer_sched(&g_minute_timer, &tv, minute_timer_expire, NULL, true);
+    //rte_timer_init(&this_flow_conn_ager);
+    //rte_timer_reset(&timer0, g_cycles_per_sec*2, PERIODICAL, lcore_id, timer0_cb, NULL);
+    rte_timer_init(&this_flow_conn_ager);
+    rte_timer_reset(&this_flow_conn_ager, 
+                    g_cycles_per_sec*FLOW_CONN_AGER_RATE, 
+                    PERIODICAL, cid, flow_ager_service, NULL);
+    return 0;
+}
+
 /* 
  * called during sys init time.
  */
@@ -203,7 +439,9 @@ flow_conn_init (__rte_unused void *arg)
         return 0;
     }
     RTE_LOG(INFO, FLOW, "%s: start on lcore %d.\n", __FUNCTION__, cid);
-    this_flowConnTable = (flow_connection_t *)rte_malloc("flow_conn_table", sizeof(flow_connection_t)*FLOW_CONN_MAX_NUMBER, 0);
+    this_flowConnTable = (flow_connection_t *)rte_malloc("flow_conn_table", 
+                                                         sizeof(flow_connection_t)*FLOW_CONN_MAX_NUMBER, 
+                                                         0);
     if (!this_flowConnTable) {
         RTE_LOG(ERR, FLOW, "%s: no memory for flow connection\n",
                 __FUNCTION__);
@@ -223,6 +461,11 @@ flow_conn_init (__rte_unused void *arg)
                 __FUNCTION__);
         goto bad;
     }
+
+    if (flow_ager_init(cid)) {
+        goto bad;
+    }
+    memcpy(this_flow_counter, flow_counter_template, sizeof(name_n_cnt));
 
     /*
      * init flow conn control prototype
@@ -283,9 +526,6 @@ flow_conn_init (__rte_unused void *arg)
 	 */
 	//add_delete_if_registry((void *)flow_clear_conn_by_ifp);
 
-    //dpvs_timer_sched(&g_minute_timer, &tv, minute_timer_expire, NULL, true);
-    //rte_timer_init(&this_flow_conn_ager);
-    //rte_timer_reset(&timer0, g_cycles_per_sec*2, PERIODICAL, lcore_id, timer0_cb, NULL);
     this_flow_status = 1;
     RTE_LOG(INFO, FLOW, "  finish on lcore %d/%d\n", cid, this_flow_status);
     return 0;
@@ -315,6 +555,7 @@ static flow_vector_t flow_first_vector_list[] =
 
 static flow_vector_t flow_fast_vector_list[] =
 {
+    flow_fast_reverse_routing,
     flow_fast_reinject_out,
     flow_fast_fw_entry,
     flow_fast_send_out,
@@ -488,7 +729,10 @@ swap_ip_port (struct rte_ipv4_hdr *iphdr, uint32_t *iptr, uint32_t *ports)
  * generate iphdr and ports info for flow connection lookup
  */
 struct rte_ipv4_hdr *
-gen_icmp_lookup_info (struct rte_ipv4_hdr *iphdr, uint32_t *iptr, struct rte_mbuf *mbuf, struct rte_ipv4_hdr *iphdr_inner, uint32_t *ports)
+gen_icmp_lookup_info (struct rte_ipv4_hdr *iphdr, 
+                      uint32_t *iptr, 
+                      struct rte_ipv4_hdr *iphdr_inner, 
+                      uint32_t *ports)
 {
 	struct rte_icmp_hdr *icmp;
 
@@ -528,27 +772,6 @@ gen_icmp_lookup_info (struct rte_ipv4_hdr *iphdr, uint32_t *iptr, struct rte_mbu
     return iphdr;
 }
 
-/*
- * hash packet for flow conn_sub_t.
- * need to tune it in accordance with the real traffic
- */
-static inline uint32_t _conn_hash (uint32_t s, uint32_t d, uint32_t p)
-{
-	register uint32_t a;
-	register uint32_t m = 0xffff; /* mask for a short int */
-
-	a = ((s>>16) ^ ((s<<8)&m));
-	a = a ^ ((d>>15) ^ ((d<<7)&m));
-	a = a ^ ((p>>16) ^ ((p<<8)&m));
-	
-	return a;
-}
-
-static inline int conn_hash (uint32_t s, uint32_t d, uint32_t p)
-{
-	return (_conn_hash(s, d, p) & FLOW_CONN_HASH_TAB_MASK);
-}
-
 /* generic way for flow conn_sub_t comparison */
 #define FOR_ALL_NAT_SESSION(node, src_adr, dst_adr, ports, head, csp, cnt)  					      \
     cnt = conn_hash(src_adr, dst_adr, ports);                                                         \
@@ -569,13 +792,23 @@ flow_proc_first_pak(struct rte_mbuf *mbuf)
 {
     /* add some performance counter here */
     int rc;
-    flow_debug_trace(FLOW_DEBUG_BASIC, "  ---- first path entry.\n");
+    flow_print_basic("  ---- first path entry.\n");
 	while (*this_flow_vector_list) {
 		if ((rc = (*this_flow_vector_list)(mbuf))) {
             break;
 		}
 	}
-    flow_debug_trace(FLOW_DEBUG_BASIC, "  ---- first path end (%d).\n", rc);
+    if (rc) {
+        if (this_flow_conn_crt->conn_sub0.route) {
+            route4_put(this_flow_conn_crt->conn_sub0.route);
+            this_flow_conn_crt->conn_sub0.route = 0;
+        }
+        if (this_flow_conn_crt->conn_sub1.route) {
+            route4_put(this_flow_conn_crt->conn_sub1.route);
+            this_flow_conn_crt->conn_sub1.route = 0;
+        }
+    }
+    flow_print_basic("  ---- first path end (%d).\n", rc);
     return rc;
 }
 
@@ -589,7 +822,6 @@ flow_first_install_connection(struct rte_mbuf *mbuf)
     }
 
     flow_install_conn(fcp);
-    fcp->fcflag &= ~FC_TIME_NO_REFRESH;
     return 0;
 }
 
@@ -603,24 +835,24 @@ flow_dump_hash(conn_sub_t *csp, int cnt)
 	if (cnt > 0) {
 		conn_sub_t *csp_next;
 		int i = 0, line = 0;
-		flow_print("  hash %6d header: %8llx, cnt %4d: ", hash, (uint64_t)csp, cnt); 
+		flow_print_detail("  hash %6d header: %8llx, cnt %4d: ", hash, (uint64_t)csp, cnt); 
 		while (csp && i++ < cnt) {
 			flow_connection_t *fcp = csp2base(csp);
 			int fcp_id = fcp2id(fcp);
 			csp_next = container_of(csp->hnode.next, conn_sub_t, hnode);
-			flow_print("%8d ", fcp_id);
+			flow_print_detail("%8d ", fcp_id);
 			if (!line) {
 				if (!(i & 0x7)) {
 					line++;
-					flow_print("\n    ");
+					flow_print_detail("\n    ");
 				}
 			} else if(!(i & 0x1f)) {
 				line++;
-				flow_print("\n    ");
+				flow_print_detail("\n    ");
 			}
 			csp = csp_next;
 		}
-		flow_print("\n");
+		flow_print_detail("\n");
 	}
 }
 
@@ -633,13 +865,34 @@ is_connection_list_loop(int cnt, int i, conn_sub_t *head)
 #define MAX_HASH_COUNT 0x1FFF
 	int count = MAX(MIN_HASH_COUNT, MIN(MAX_HASH_COUNT, cnt<<1));
 	if (i > count) {
-		if (flow_debug_flag & FLOW_DEBUG_DETAIL) {
-            flow_print("hash(0x%llx) abnormal, hash counter %d, hash connecetion wings %d.\n", head, cnt, i);
-			flow_dump_hash(head, MIN(cnt + 1, 100));
-		}
+        flow_print_detail("hash(0x%llx) abnormal, hash counter %d, hash connecetion wings %d.\n", head, cnt, i);
+        flow_dump_hash(head, MIN(cnt + 1, 100));
 		return 1;
 	}
 	return 0;
+}
+
+uint16_t
+flow_get_default_time(uint8_t proto)
+{
+	uint16_t timeout;
+
+    switch (proto) {
+        case IPPROTO_TCP:
+            timeout = FLOW_CONN_TCP_TIMEOUT;
+            break;
+        case IPPROTO_UDP:
+            timeout = FLOW_CONN_UDP_TIMEOUT;
+            break;
+        case IPPROTO_ICMP:
+            timeout = FLOW_CONN_PING_TIMEOUT;
+            break;
+            default:
+            timeout = FLOW_CONN_DEF_TIMEOUT;
+            break;
+    }
+
+	return timeout;
 }
 
 int 
@@ -650,7 +903,7 @@ flow_first_fcp_crt_init(struct rte_mbuf *mbuf, uint32_t ports)
 
     struct rte_ipv4_hdr *iph;
 
-    flow_print("  %s entry, init fcp len %d\n", __FUNCTION__, len);
+    flow_print_basic("  %s entry, init fcp len %d\n", __FUNCTION__, len);
     /*
      * reset flow connection control prototype
      */
@@ -668,8 +921,12 @@ flow_first_fcp_crt_init(struct rte_mbuf *mbuf, uint32_t ports)
     csp1->csp_dst_port = csp2->csp_src_port = ip_dst_port(ports);
     csp1->csp_proto = csp2->csp_proto = iph->next_proto_id;
     csp1->csp_token = csp2->csp_token = 1; /* should be set to vrf */
-    this_flow_conn_crt->start_time = rte_get_tsc_cycles();
+    csp1->cspflag = CSP_INITIATE_SIDE;
+    csp1->ifp = netif_port_get(mbuf->port);
+    this_flow_conn_crt->start_time = rte_get_tsc_cycles() / g_cycles_per_sec;
+    this_flow_conn_crt->time_const = flow_get_default_time(csp1->csp_proto);
     SET_CSP_TO_MBUF(mbuf, (uint64_t)csp1);
+    rte_mb();
     return 0;
 }
 
@@ -712,10 +969,12 @@ flow_find_connection(struct rte_mbuf *mbuf)
              * it appear as an returning packet for subsequent xlate.
              * icmp decoder can also decide abort session match by return NULL.
              */
-            iph = gen_icmp_lookup_info(iph, iptr, mbuf, &iph_r, &ports);
+            iph = gen_icmp_lookup_info(iph, iptr, &iph_r, &ports);
             if (iph == NULL) {
+                this_flow_counter[FLOW_ERR_ICMP_HEADER].counter++;
                 return -1;
             } else if (iph == (struct rte_ipv4_hdr *)-1) {
+                this_flow_counter[FLOW_ERR_ICMP_REDIRECT].counter++;
                 return -1;
             }
             break;
@@ -736,7 +995,7 @@ flow_find_connection(struct rte_mbuf *mbuf)
     }
 
     if (fcp) {
-        flow_debug_trace(FLOW_DEBUG_BASIC, "  existing connection found. id %d\n", fcp2id(fcp));
+        flow_print_basic("  existing connection found. id %d\n", fcp2id(fcp));
         SET_CSP_TO_MBUF(mbuf, (uint64_t)csp);
         if (IS_CSP_DISABLE(csp)) {
             /* do something */
@@ -745,7 +1004,7 @@ flow_find_connection(struct rte_mbuf *mbuf)
         /* 
          * first pak, try to creat a new one 
          */
-        flow_debug_trace(FLOW_DEBUG_BASIC, "  no session found\n");
+        flow_print_basic("  no session found\n");
 
         /*
          * keep original vector list
@@ -768,7 +1027,7 @@ flow_find_connection(struct rte_mbuf *mbuf)
 int 
 flow_first_sanity_check(struct rte_mbuf *mbuf)
 {
-    flow_print("  %s entry\n", __FUNCTION__);
+    flow_print_basic("  %s entry\n", __FUNCTION__);
     return flow_next_pak_vector(mbuf);
 }
 
@@ -783,10 +1042,10 @@ flow_first_alloc_connection(struct rte_mbuf *mbuf)
     if (fcp) {
         this_flow_curr_conn++;
         this_flow_free_conn--;
-        flow_debug_trace(FLOW_DEBUG_BASIC, "  alloc flow connection from pool\n");
+        flow_print_basic("  alloc flow connection from pool\n");
     } else {
         this_flow_no_conn++;
-        flow_debug_trace(FLOW_DEBUG_BASIC, "  failed to alloc flow connection\n");
+        flow_print_basic("  failed to alloc flow connection\n");
         return -1;
     }
 
@@ -795,6 +1054,10 @@ flow_first_alloc_connection(struct rte_mbuf *mbuf)
     csp2 = &fcp->conn_sub1;
     memcpy(&csp1->start, &this_flow_conn_crt->conn_sub0.start, len);
     memcpy(&csp2->start, &this_flow_conn_crt->conn_sub1.start, len);
+    this_flow_conn_crt->conn_sub0.route = NULL;
+    this_flow_conn_crt->conn_sub1.route = NULL;
+    clr_csp_invalid(csp1);
+    clr_csp_invalid(csp2);
 
     len = sizeof(flow_connection_t)-offsetof(flow_connection_t, start);
     memcpy(&fcp->start, &this_flow_conn_crt->start, len);
@@ -805,7 +1068,7 @@ flow_first_alloc_connection(struct rte_mbuf *mbuf)
 int 
 flow_first_hole_search(struct rte_mbuf *mbuf)
 {
-    flow_print("  %s entry\n", __FUNCTION__);
+    flow_print_basic("  %s entry\n", __FUNCTION__);
     return flow_next_pak_vector(mbuf);
 }
 
@@ -920,7 +1183,7 @@ flow_first_for_self(struct rte_mbuf *mbuf)
 
     my_pak = pak_to_my_addrs(iph, mbuf->port);
     if (my_pak) {
-        flow_debug_trace(FLOW_DEBUG_BASIC, "   the packet is destined to us\n");
+        flow_print_basic("   the packet is destined to us\n");
         my_pak=pak_for_self(iph, iptr);
         if (my_pak) {
             /* since we have no user-mode stack, we hack the icmp echo here
@@ -938,10 +1201,12 @@ flow_first_for_self(struct rte_mbuf *mbuf)
                 fl4.fl4_proto        = IPPROTO_ICMP;
                 csp->route = route4_output(&fl4);
                 SET_CSP_TO_MBUF(mbuf, host_csp);
-                flow_debug_trace(FLOW_DEBUG_BASIC, "   to self ping handle\n");
+                flow_print_basic("   to self ping handle without fcp\n");
+                this_flow_counter[FLOW_BRK_TO_SELF].counter++;
                 return FLOW_RET_BREAK;
             } else {
-                flow_debug_trace(FLOW_DEBUG_BASIC, "   to self but not ready to handle, drop the packet\n");
+                flow_print_basic("   to self but not ready to handle, drop the packet\n");
+                this_flow_counter[FLOW_ERR_TO_SELF_DROP].counter++;
                 return FLOW_RET_ERR;
             }
         }
@@ -960,20 +1225,23 @@ flow_first_routing(struct rte_mbuf *mbuf)
     ifp = netif_port_get(mbuf->port);
     rt = route4_input(mbuf, (struct in_addr *)&iph->dst_addr,
                       (struct in_addr *)&iph->src_addr,
-                      iph->type_of_service, ifp);
-    if (!rt || !rt->port) {
-        flow_debug_trace(FLOW_DEBUG_BASIC, "  no route to 0x%x\n", ntohl(iph->dst_addr));
+                      iph->type_of_service, NULL);
+    if (!rt) {
+        flow_print_basic("  no route to 0x%x\n", ntohl(iph->dst_addr));
+        this_flow_counter[FLOW_ERR_NO_ROUTE].counter++;
         return FLOW_RET_ERR;
     } else if (!rt->port) {
-        flow_debug_trace(FLOW_DEBUG_BASIC, "  route 0x%llx have no interface\n", rt);
+        flow_print_basic("  route 0x%llx have no interface\n", rt);
+        this_flow_counter[FLOW_ERR_NO_ROUTE_IFP].counter++;
         return FLOW_RET_ERR;
     }
 
     csp = GET_CSP_FROM_MBUF(mbuf);
     peer = csp2peer(csp);
     peer->route = rt;
+    peer->ifp = rt->port;
 
-    flow_debug_trace(FLOW_DEBUG_BASIC, "  routed(0x%x) from %s to %s\n", 
+    flow_print_basic("  routed(0x%x) from %s to %s\n", 
                      ntohl(iph->dst_addr),
                      ifp->name,
                      rt->port->name);
@@ -984,55 +1252,21 @@ flow_first_routing(struct rte_mbuf *mbuf)
 int
 flow_first_fw_entry(struct rte_mbuf *mbuf)
 {
-    flow_print("  %s entry\n", __FUNCTION__);
+    flow_print_basic("  %s entry\n", __FUNCTION__);
     return flow_next_pak_vector(mbuf);
 }
 
-static int is_flow_conn_init_log  = 1;
-static int
-need_log_for_connection(flow_connection_t *fcp)
-{
-    return 0;
-}
-
-static int
-gen_conn_log(flow_connection_t *fcp, int init)
-{
-    return 0;
-}
-
-static void
-add_to_conn_hash(conn_sub_t *csp)
-{
-	int hash_value;
-    uint32_t cnt;
-	flow_connection_t *fcp = csp2base(csp);
-
-	hash_value = conn_hash(csp->csp_src_ip, csp->csp_dst_ip, *(uint32_t *)&csp->csp_src_port);
-
-    hlist_add_head(&csp->hnode, this_flow_conn_hash_base+hash_value);
-    cnt = *(this_flow_conn_hash_cnt_base+hash_value);
-    *(this_flow_conn_hash_cnt_base+hash_value) = cnt+1;
-    if (flow_debug_flag & FLOW_DEBUG_BASIC) {
-        char saddr[16], daddr[16];
-        inet_ntop(AF_INET, &csp->csp_src_ip, saddr, sizeof(saddr));
-        inet_ntop(AF_INET, &csp->csp_dst_ip, daddr, sizeof(daddr));
-        flow_debug_trace_no_flag("++ csp add %d(0x%llx): %s/%d->%s/%d,%d, time %d, cspflag 0x%x\n",
-                                 hash_value, csp, 
-                                 saddr, ntohs(csp->csp_src_port),
-                                 daddr, ntohs(csp->csp_dst_port),
-                                 csp->csp_proto, fcp->time, csp->cspflag);
-    }
-}
-
-/* install a flow connection
- * this vector never fail
+/*
+ * fw may want to manage the connection itself
  */
 void
-flow_install_conn(flow_connection_t *fcp)
+flow_install_conn_no_refresh(flow_connection_t *fcp)
 {
     add_to_conn_hash(&fcp->conn_sub0);
     add_to_conn_hash(&fcp->conn_sub1);
+
+    /* do not insert fcp to ager and make it NO_REFRESH */
+    fcp->fcflag |= FC_TIME_NO_REFRESH;
 
     /* Set the reason in the new connection to creation: this is used for traffic logging */	
     fcp->reason = FC_CREATION;
@@ -1042,11 +1276,24 @@ flow_install_conn(flow_connection_t *fcp)
      */
     if (is_flow_conn_init_log) {
         if (need_log_for_connection(fcp)) {
-            gen_conn_log(fcp, 1/* init log */);
+            gen_conn_log(fcp);
         }
     }
 
     fcp->fcflag |= FC_INSTALLED;
+}
+
+/* install a flow connection
+ * this vector never fail
+ */
+void
+flow_install_conn(flow_connection_t *fcp)
+{
+    flow_print_basic("  %s: install the fcp %d\n", __FUNCTION__, fcp2id(fcp));
+    flow_install_conn_no_refresh(fcp);
+
+    /* remove the NO_REFRESH flag and insert it to ager */
+    fcp->fcflag &= ~FC_TIME_NO_REFRESH;
 }
 
 int
@@ -1062,19 +1309,20 @@ flow_filter_vector(struct rte_mbuf *mbuf)
     iptr = rte_pktmbuf_mtod_offset(mbuf, uint32_t *, iphdrlen);
 
     flow_mark_pak(iph, iptr);
+    flow_print_packet(mbuf);
     if (flow_debug_flag & FLOW_DEBUG_BASIC) {
-    if (!inet_ntop(AF_INET, &iph->src_addr, saddr, sizeof(saddr)))
-        return -1;
-    if (!inet_ntop(AF_INET, &iph->dst_addr, daddr, sizeof(daddr)))
-        return -1;
+        if (!inet_ntop(AF_INET, &iph->src_addr, saddr, sizeof(saddr)))
+            return -1;
+        if (!inet_ntop(AF_INET, &iph->dst_addr, daddr, sizeof(daddr)))
+            return -1;
 #if 0
-    flow_print("%s mark this packet %d/%d->%d/%d, %d\n",
+        flow_print("%s mark this packet %d/%d->%d/%d, %d\n",
                 __FUNCTION__,
                 saddr, ip_src_port(*iptr),
                 daddr, ip_dst_port(*iptr),
                 iph->next_proto_id);
 #else
-    flow_print("%s mark this packet.\n", __FUNCTION__);
+        flow_print("%s mark this packet.\n", __FUNCTION__);
 #endif
     }
     return flow_next_pak_vector(mbuf);
@@ -1106,14 +1354,14 @@ flow_decap_vector(struct rte_mbuf *mbuf)
     flow_connection_t *fcp;
     uint32_t fcid;
 
-    flow_print("%s entry\n", __FUNCTION__);
+    flow_print_basic("%s entry\n", __FUNCTION__);
     csp = GET_CSP_FROM_MBUF(mbuf);
     if (!csp) {
         if (flow_find_connection(mbuf) < 0) {
             return -1;
         }
     } else {
-        flow_print("  flow packet already have connection.\n");
+        flow_print_basic("  flow packet already have connection.\n");
     }
 
     fcp = GET_FC_FROM_MBUF(mbuf);
@@ -1121,8 +1369,9 @@ flow_decap_vector(struct rte_mbuf *mbuf)
         fcid = 0;
     } else {
         fcid = fcp2id(fcp);
+        flow_refresh_connection(fcp);
     }
-    flow_print("  flow connection id %u\n", fcid);
+    flow_print_basic("  flow connection id %u\n", fcid);
 
     if (!is_tunnel_session(fcp)) {
         return flow_next_pak_vector(mbuf);
@@ -1145,23 +1394,102 @@ flow_gen_icmp_pak(uint8_t __rte_unused type, uint8_t __rte_unused code)
     }
 
     flow_set_icmp_pak();
-
 #endif
     return 0;
 }
 
 int
+flow_fast_reverse_routing(struct rte_mbuf *mbuf)
+{
+    conn_sub_t *csp, *peer;
+    struct route_entry *rt = NULL;
+    flow_print_basic(" %s entry.\n", __FUNCTION__);
+
+    csp = GET_CSP_FROM_MBUF(mbuf);
+    peer = csp2peer(csp);
+    if (peer->route) {
+        if (peer->route->port == peer->ifp) {
+            flow_print_basic("  csp had been set already %s\n", peer->ifp->name);
+        } else {
+            flow_print_basic("  csp update the ifp %s->%s\n", 
+                       (peer->ifp)?peer->ifp->name:"uncertain", 
+                       (peer->route->port)?peer->route->port->name:"uncertain");
+            peer->ifp = peer->route->port;
+            peer->cspflag |= CSP_IFP_UPDATE;
+        }
+    } else {
+        rt = route4_input(NULL, (struct in_addr *)&peer->csp_src_ip,
+                          (struct in_addr *)&peer->csp_dst_ip,
+                          0, NULL);
+        if (!rt) {
+            flow_print_basic("  no reverse route to 0x%x\n", ntohl(peer->csp_src_ip));
+            this_flow_counter[FLOW_ERR_NO_R_ROUTE].counter++;
+            return FLOW_RET_ERR;
+        } else if (!rt->port) {
+            flow_print_basic("  reverse route 0x%llx have no interface\n", rt);
+            this_flow_counter[FLOW_ERR_NO_R_ROUTE_IFP].counter++;
+            return FLOW_RET_ERR;
+        }
+        peer->route = rt;
+        if (rt->port != peer->ifp) {
+            flow_print_basic("  csp update the ifp %s->%s\n", 
+                       (peer->ifp)?peer->ifp->name:"uncertain", 
+                       (rt->port)?rt->port->name:"uncertain");
+            peer->ifp = rt->port;
+            peer->cspflag |= CSP_IFP_UPDATE;
+        }
+    }
+
+    return flow_next_pak_vector(mbuf);
+}
+
+int
 flow_fast_reinject_out(struct rte_mbuf *mbuf)
 {
-    flow_print(" %s entry.\n", __FUNCTION__);
+    flow_print_basic(" %s entry.\n", __FUNCTION__);
     return flow_next_pak_vector(mbuf);
 }
 
 int
 flow_fast_fw_entry(struct rte_mbuf *mbuf)
 {
-    flow_print(" %s entry.\n", __FUNCTION__);
+    flow_print_basic(" %s entry.\n", __FUNCTION__);
     return flow_next_pak_vector(mbuf);
+}
+
+extern int neigh_output(int af, union inet_addr *nexhop,
+                 struct rte_mbuf *m, struct netif_port *port);
+extern int
+flow_ipv4_output(struct rte_mbuf *mbuf);
+int 
+flow_ipv4_output(struct rte_mbuf *mbuf)
+{
+    conn_sub_t *csp = GET_CSP_FROM_MBUF(mbuf);
+    struct route_entry *rt = csp2peer(csp)->route;
+    int err;
+    struct in_addr nexthop;
+
+    if (rt->gw.s_addr == htonl(INADDR_ANY))
+        nexthop.s_addr = ip4_hdr(mbuf)->dst_addr;
+    else
+        nexthop = rt->gw;
+
+    /**
+     * XXX:
+     * because lacking of suitable fields in mbuf
+     * (m.l3_type is only 4 bits, too short),
+     * m.packet_type is used to save ether_type
+     * e.g., 0x0800 for IPv4.
+     * note it was used in RX path for eth_type_t.
+     * really confusing.
+     */
+    mbuf->packet_type = RTE_ETHER_TYPE_IPV4;
+    mbuf->l3_len = ip4_hdrlen(mbuf);
+
+    /* reuse @userdata/@udata64 for prio (used by tc:pfifo_fast) */
+	mbuf_udata64_set(mbuf, ((ip4_hdr(mbuf)->type_of_service >> 1) & 15));
+    err = neigh_output(AF_INET, (union inet_addr *)&nexthop, mbuf, rt->port);
+    return err;
 }
 
 extern int ipv4_output_fin2(struct rte_mbuf *mbuf);
@@ -1170,17 +1498,20 @@ flow_fast_send_out(struct rte_mbuf *mbuf)
 {
     int rc;
 
-    flow_print(" %s entry.\n", __FUNCTION__);
+    flow_print_basic(" %s entry.\n", __FUNCTION__);
     conn_sub_t *csp = GET_CSP_FROM_MBUF(mbuf);
     struct route_entry *rt = csp2peer(csp)->route;
     if (!rt->port) {
-        flow_print(" route 0x%llx no interface, dest 0x%x, refcnt %d.\n",
+        flow_print_basic(" route 0x%llx no interface, dest 0x%x, refcnt %d.\n",
                    rt, rt->dest, rte_atomic32_read(&rt->refcnt));
         return FLOW_RET_ERR;
     }
-    rc = ipv4_output_fin2(mbuf);
-    if (rc)
+    rc = flow_ipv4_output(mbuf);
+    if (rc) {
+        this_flow_counter[FLOW_ERR_SEND_OUT].counter++;
+        flow_print_basic("  failed to send out %s.\n", rt->port->name);
         return FLOW_RET_ERR;
+    }
     return flow_next_pak_vector(mbuf);
 }
 
@@ -1199,7 +1530,7 @@ flow_main_body_vector (struct rte_mbuf *mbuf)
     flow_connection_t *fcp;
     conn_sub_t *csp;
 
-    flow_print("%s entry\n", __FUNCTION__);
+    flow_print_basic("%s entry\n", __FUNCTION__);
     csp = GET_CSP_FROM_MBUF(mbuf);
     fcp = csp2base(csp);
     rte_prefetch0(csp);
@@ -1220,6 +1551,7 @@ flow_main_body_vector (struct rte_mbuf *mbuf)
         npak = flow_gen_icmp_pak(ICMP_DEST_UNREACH, ICMP_FRAG_NEEDED);
         if (npak)
             flow_send_return_pak(npak);
+        this_flow_counter[FLOW_ERR_ICMP_GEN].counter++;
         return -1;
     }
 
@@ -1234,7 +1566,7 @@ flow_main_body_vector (struct rte_mbuf *mbuf)
 int
 flow_drop_packet(struct rte_mbuf *mbuf)
 {
-    flow_debug_trace(FLOW_DEBUG_BASIC, "  drop the packet 0x%llx\n", mbuf);
+    flow_print_basic("  drop the packet 0x%llx\n", mbuf);
     rte_pktmbuf_free(mbuf);
     return 0;
 }
@@ -1279,9 +1611,8 @@ flow_handle_other_queue()
 int
 flow_processing_paks(struct rte_mbuf *mbuf)
 {
-    flow_debug_trace_no_flag("%s entry, packet 0x%llx\n", 
-                             __FUNCTION__, mbuf); 
-    flow_debug_packet(0, mbuf);
+    flow_debug_trace(FLOW_DEBUG_BASIC, "%s entry, packet 0x%llx\n", 
+                     __FUNCTION__, mbuf); 
 
     /* clear the mbuf dynfield1 */
     SET_CSP_TO_MBUF(mbuf, 0);
@@ -1294,7 +1625,6 @@ flow_processing_paks(struct rte_mbuf *mbuf)
 
         flow_handle_other_queue();
     }
-    flow_debug_trace_no_flag("%s exit\n\n", __FUNCTION__);
     return 0;
 }
 

@@ -82,21 +82,6 @@ static int route_local_hash(struct route_entry *route)
     return EDPVS_OK;
 }
 
-struct route_entry g_route_entry_pool[ROUTE_ENTRY_NUMBER];
-uint8_t route_entry_state[ROUTE_ENTRY_NUMBER];
-static struct route_entry *
-malloc_rt_from_pool(void)
-{
-    int i;
-    for (i = 0; i < ROUTE_ENTRY_NUMBER; i++) {
-        if (!route_entry_state[i]) {
-            route_entry_state[i] = 1;
-            return &g_route_entry_pool[i];
-        }
-    }
-    return NULL;
-}
-
 static struct route_entry *route_new_entry(struct in_addr* dest,
                                            uint8_t netmask, uint32_t flag,
                                            struct in_addr* gw, struct netif_port *port,
@@ -106,8 +91,7 @@ static struct route_entry *route_new_entry(struct in_addr* dest,
     struct route_entry *new_route=NULL;
     if(!dest)
         return NULL;
-    //new_route = rte_zmalloc("new_route_entry", sizeof(struct route_entry), 0);
-    new_route = malloc_rt_from_pool();
+    new_route = rte_zmalloc("new_route_entry", sizeof(struct route_entry), 0);
     if (new_route == NULL){
         return NULL;
     }

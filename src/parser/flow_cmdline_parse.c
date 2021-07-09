@@ -119,7 +119,19 @@ match_node(cmd_node_t *node, const char *buf,
 		node->type == CMD_NODE_TYPE_EOL) {
 		rc = 0;
 		goto parse_it;
-	}
+	} else if (node->type == CMD_NODE_TYPE_TEST &&
+               node->subtype == CMD_TEST_TYPE_UNSET) {
+        /* 
+         * now test node only have one subtype "unset", we may 
+         * add some more subtypes like to validate the number/string/
+         * ip/mac/time etc
+         */
+        if (cmd_blk->mode == MODE_UNDO) {
+            return CMD_PARSE_TEST_NODE_RET;
+        } else {
+            return -1;
+        }
+    }
     token = node->token;
 	len = strlen(token);
 
@@ -182,19 +194,19 @@ parse_it:
                 if (node->type == CMD_NODE_TYPE_STR) {
                     cmd_blk->string_cnt++;
                     strncpy(cmd_blk->string[node->index-1], buf, str_len);
-                    rc = str_len;
                 } else if (node->type == CMD_NODE_TYPE_IPV4) {
-                    if (str_len >= INET_ADDRSTRLEN)
+                    if (str_len >= INET_ADDRSTRLEN && !partial)
                         return -1;
                     strncpy(tmp, buf, str_len);
                     tmp[str_len] = '\0';
                     rc = inet_pton(AF_INET, tmp, ipv4);
-                    if (rc <= 0) {
+                    if (rc <= 0 && !partial) {
                         return -1;
                     }
                     cmd_blk->ipv4_cnt++;
                     cmd_blk->ipv4[node->index-1] = htonl(*((uint32_t *)ipv4));
                 }
+                rc = str_len;
 				break;
 			case CMD_NODE_TYPE_NUM:
 				uint_value = 0;
@@ -208,6 +220,9 @@ parse_it:
 					str_len++;
 					c = *buf;
 				}
+                if (!str_len && !partial) {
+                    return -1;
+                }
 				cmd_blk->number_cnt++;
 				cmd_blk->number[node->index-1] = uint_value;
 				rc = str_len;
@@ -383,7 +398,9 @@ tyflow_cmdline_parse(struct cmdline *cl, const char * buf, int console)
 			}
 			break;
 		} else {
-			curbuf+=tok;
+            if (node->type != CMD_NODE_TYPE_NO_KW) {
+                curbuf+=tok;
+            }
 			node = node->child;
 		}
 	}
@@ -507,6 +524,11 @@ tyflow_cmdline_complete(struct cmdline *cl, const char *buf, int *action, char *
             node = node->sibl;
             continue;
         }
+        if (tok == CMD_PARSE_TEST_NODE_RET &&
+            node->type == CMD_NODE_TYPE_TEST) {
+            node = node->child;
+            continue;
+        }
         if (partial) {
             node_partial_match[node_partial_index++] = node;
             node = node->sibl;
@@ -514,7 +536,9 @@ tyflow_cmdline_complete(struct cmdline *cl, const char *buf, int *action, char *
             if (tok == 0) {
                 break;
             } else {
-                curbuf+=tok;
+                if (node->type != CMD_NODE_TYPE_NO_KW) {
+                    curbuf+=tok;
+                }
                 node = node->child;
             }
         }
@@ -555,7 +579,7 @@ tyflow_cmdline_complete(struct cmdline *cl, const char *buf, int *action, char *
         }
         node = node_partial_match[0];
         for (i=node_partial_index-1; i>=0; i--) {
-            if (node_partial_match[0]->type == CMD_NODE_TYPE_KW) {
+            if (node_partial_match[i]->type == CMD_NODE_TYPE_KW) {
                 len += snprintf(dst+len, size-len, "%-24s%s\r\n", node_partial_match[i]->token, node_partial_match[i]->help);
             } else {
                 char *token = cmd_get_value_node_token(node_partial_match[i]);
@@ -673,6 +697,8 @@ extern void
 debug_init(void);
 extern void
 cmd_batch_init(void);
+extern void
+flow_filter_init(void);
 void
 cmd_init(void)
 {
@@ -689,6 +715,7 @@ cmd_init(void)
     cmd_dup_child(&cnode(undebug), &cnode(debug));
 
     cmd_batch_init();
+    flow_filter_init();
 
     add_top_cmd(&cnode(create));
     add_top_cmd(&cnode(delete));

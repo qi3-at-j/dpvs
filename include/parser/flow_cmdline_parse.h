@@ -252,7 +252,18 @@ typedef struct cmd_blk_ {
 #define CMD_NODE_TYPE_STR  3
 #define CMD_NODE_TYPE_NUM  4
 #define CMD_NODE_TYPE_IPV4 5
-#define CMD_NODE_TYPE_EOL  6
+#define CMD_NODE_TYPE_NO_KW 6
+/* now only TEST node is NO_KW, so dup it */
+#define CMD_NODE_TYPE_TEST CMD_NODE_TYPE_NO_KW
+    #define CMD_TEST_TYPE_UNSET 1
+#define CMD_NODE_TYPE_EOL  7
+
+/* 
+ * hack it to the max cmd buffer size plus 1 
+ * but it is not always working, we had better 
+ * add extra check with CMD_NODE_TYPE_TEST
+ */
+#define CMD_PARSE_TEST_NODE_RET (RDLINE_BUF_SIZE+1)
 
 typedef int (* cmd_fn_t)(cmd_blk_t *);
 
@@ -395,6 +406,18 @@ exnode(exit);
 		NULL,                  \
 		help                   \
 	}
+
+#define TEST_UNSET(node, child, sibl)                      \
+    cmd_node_t cnode(node) = { \
+        &cnode(child),         \
+        &cnode(sibl),          \
+        CMD_NODE_TYPE_TEST,    \
+        CMD_TEST_TYPE_UNSET,   \
+        0,                     \
+        0,                     \
+        NULL,                  \
+        NULL                   \
+    };
 
 static inline char *
 cmd_get_value_node_token(cmd_node_t *node)

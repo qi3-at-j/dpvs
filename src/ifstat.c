@@ -54,6 +54,7 @@ link_detect(char* name)
 #endif
 }
 
+static int g_ifp_status = 0;
 static char *if_name;
 static void
 ifstate_proc(void *dummy)
@@ -64,12 +65,12 @@ ifstate_proc(void *dummy)
 	gettimeofday(&tv, NULL);
 	if (tv.tv_sec >= (last_tv.tv_sec+1)) {
 		ifp_status = link_detect(if_name);
-		if (ifp_status)
+		if (ifp_status != g_ifp_status) {
 			ifstate_log("%s is %s\n", if_name, (ifp_status==0)?"UP":"DOWN");
+            g_ifp_status = ifp_status;
+        }
 		last_tv.tv_sec = tv.tv_sec;
 	}
-	//if (ifp_status) {
-	//}
 }
 
 

@@ -31,9 +31,27 @@ extern uint32_t flow_debug_flag;
             mac?debug_trace_packet_mac(mbuf):debug_trace_packet_ip(mbuf); \
     }while(0)
 
+
 #define flow_print(fmt, arg...)               \
     if (this_ffilter_show_this_pak > 0) {     \
         flow_debug_trace_no_flag(fmt, ##arg); \
+    }
+
+#define flow_print_basic(fmt, arg...)         \
+    if (this_ffilter_show_this_pak > 0) {     \
+        flow_debug_trace(FLOW_DEBUG_BASIC,    \
+                         fmt, ##arg);         \
+    }
+
+#define flow_print_packet(mbuf)               \
+    if (this_ffilter_show_this_pak > 0) {     \
+        flow_debug_packet(0, mbuf);           \
+    }
+
+#define flow_print_detail(fmt, arg...)        \
+    if (this_ffilter_show_this_pak > 0) {     \
+        flow_debug_trace(FLOW_DEBUG_EVENT,    \
+                         fmt, ##arg);         \
     }
 
 extern void

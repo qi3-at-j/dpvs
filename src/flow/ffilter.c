@@ -44,21 +44,21 @@ get_ffilter_cli (cmd_blk_t *cbt)
 		tyflow_cmdline_printf(cbt->cl, "Flow filter based on:\n");
 		for (i=0; i< total_ffilter; i++){
 			cur_filter=&ffilter_ent[i];
-			tyflow_cmdline_printf(cbt->cl, "id:%d ", i);
+			tyflow_cmdline_printf(cbt->cl, "  id:%d ", i);
 			if (cur_filter->src_ip) {
                 inet_ntop(AF_INET, &cur_filter->src_ip, addr, sizeof(addr));
-				tyflow_cmdline_printf(cbt->cl, "src ip %s ", addr);
+				tyflow_cmdline_printf(cbt->cl, "src-ip %s ", addr);
             }
 			if (cur_filter->dst_ip) {
                 inet_ntop(AF_INET, &cur_filter->dst_ip, addr, sizeof(addr));
-				tyflow_cmdline_printf(cbt->cl, "dst ip %s ", addr);
+				tyflow_cmdline_printf(cbt->cl, " dst-ip %s ", addr);
             }
 			if (cur_filter->proto)
-				tyflow_cmdline_printf(cbt->cl, "ip proto %d ", cur_filter->proto);
+				tyflow_cmdline_printf(cbt->cl, " ip-proto %d ", cur_filter->proto);
 			if (cur_filter->src_port)
-				tyflow_cmdline_printf(cbt->cl, "src port %d ", ntohs(cur_filter->src_port));
+				tyflow_cmdline_printf(cbt->cl, " src-port %d ", ntohs(cur_filter->src_port));
 			if (cur_filter->dst_port)
-				tyflow_cmdline_printf(cbt->cl, "dst port %d ", ntohs(cur_filter->dst_port));
+				tyflow_cmdline_printf(cbt->cl, " dst-port %d ", ntohs(cur_filter->dst_port));
 			tyflow_cmdline_printf(cbt->cl, "\n");
 		};
 	}
@@ -98,7 +98,6 @@ set_ffilter_cli (cmd_blk_t *cbt)
             return -1;
         }
         src_ip = *((int *)buf);
-        src_ip = htonl(src_ip);
 	}
 	if (cbt->which[1] == 1) {
         rc = inet_pton(AF_INET, cbt->string[1], buf);
@@ -107,7 +106,6 @@ set_ffilter_cli (cmd_blk_t *cbt)
             return -1;
         }
         dst_ip = *((int *)buf);
-        dst_ip = htonl(dst_ip);
 	}
 	cur_filter=&ffilter_ent[total_ffilter++];
 	memset(cur_filter, 0, sizeof(ffilter_ent_t));
@@ -144,7 +142,9 @@ KW_NODE_WHICH(ff_dst_ip, ff_dst_ip_val, ff_ip_proto,
 VALUE_NODE(ff_src_ip_val, ff_dst_ip, none, "the specific ip", 1, STR);
 KW_NODE_WHICH(ff_src_ip, ff_src_ip_val, ff_dst_ip,
 	"src-ip", "flow filter src ip", 1, 1);
-KW_NODE(set_ffilter, ff_src_ip, none, "ffilter", "flow filter configuration");
+VALUE_NODE(unset_ffilter_id, set_ffilter_eol, none, "flow filter id", 1, NUM);
+TEST_UNSET(test_unset_ffilter, unset_ffilter_id, ff_src_ip);
+KW_NODE(set_ffilter, test_unset_ffilter, none, "ffilter", "flow filter configuration");
 
 void 
 flow_filter_init (void)
@@ -164,12 +164,30 @@ pak_match_filter (struct rte_ipv4_hdr *iphdr, uint32_t *iptr)
 	int dst_port;
 	int i;
 	ffilter_ent_t *cur_filter;
+    struct rte_ipv4_hdr iphdr_inner;
+    uint32_t ports;
 
 	if (total_ffilter==0) /* always match if none is defined */
 		return 1;
 
-	src_port = ip_src_port(*iptr);
-	dst_port = ip_dst_port(*iptr);
+    if (iphdr->next_proto_id == IPPROTO_ICMP) {
+        iphdr = gen_icmp_lookup_info(iphdr, iptr, &iphdr_inner, &ports);
+        if (!iphdr || iphdr == (struct rte_ipv4_hdr *)-1) {
+            flow_debug_trace(FLOW_DEBUG_DETAIL, 
+                             "    failed to parse the icmp packet\n");
+            /* we may be interest in the corrupted packet */
+            return 1;
+        }
+    } else {
+        ports = *iptr;
+    }
+	src_port = ip_src_port(ports);
+	dst_port = ip_dst_port(ports);
+    flow_debug_trace(FLOW_DEBUG_DETAIL, 
+                     "    try to match flow filter for 0x%x/%d->0x%x/%d,%d\n", 
+                     iphdr->src_addr, src_port,
+                     iphdr->dst_addr, dst_port,
+                     iphdr->next_proto_id);
 	
 	for (i=0; i<total_ffilter; i++){
 		cur_filter=&ffilter_ent[i];
@@ -178,9 +196,11 @@ pak_match_filter (struct rte_ipv4_hdr *iphdr, uint32_t *iptr)
 			(cur_filter->src_port == 0 || src_port == cur_filter->src_port) &&
 			(cur_filter->dst_port == 0 || dst_port == cur_filter->dst_port) &&
 			(cur_filter->proto == 0 || iphdr->next_proto_id == cur_filter->proto)) {
+            flow_debug_trace(FLOW_DEBUG_DETAIL, "    match flow filter %d\n", i);
 			return 1;
 		}
 	}
+    flow_debug_trace(FLOW_DEBUG_DETAIL, "    no match any flow filter\n");
 	return 0;
 }
 

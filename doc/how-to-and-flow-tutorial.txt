@@ -1,0 +1,37 @@
+1. how to debug flow?
+   a.1> enable flow debugger: 
+       cli > debug flow [basic | event | packet | detail | all]
+   a.2> show flow debugger: 
+       cli > show flow debug status 
+   a.3> disable flow debugger:
+       cli > undebug flow [basic | event | packet | detail | all]
+   b.1> filter specific packet: 
+       cli > set ffilter [src-ip <ip>] [dst-ip <ip>] [ip-proto <number>] [src-port <number>] [dst-port <number>]
+         PS1: if you want to filter the packet with 5-tuple, you have to configure the filter exactly following above sequence
+              which is src-ip -> dst-ip -> ip-proto -> src-port -> dst-port
+         PS2: if you want to filter the packet by <fitler 1> OR <filter 2>, you have to add a new ffilter, if any of the filter is 
+              matched, the packet will be shown
+   b.2> show filter: 
+       cli > show ffilter 
+   b.3> delete filter: 
+       cli > unset ffilter <number>
+         PS1: the <number> is filter id which can be got by "show ffilter"
+
+
+2. how to check the flow status/statistic?
+   a> cli "show flow debug status" displays the flow debug status
+   b> cli "show flow connection ..." commands
+     b.1> cli "show flow connection summary" display the flow connection summary info
+     b.2> cli "show flow connection all" display all the flow connections without any parameter
+     b.3> cli "show flow connection id <number>" display one specific flow connection
+     b.4> cli "show flow connection counter" display the flow connection related counters
+     b.5> cli "show flow connection [src-ip | dst-ip | protocol | src-port | dst-port]" display all the flow connections matching the parameter
+       b.5.i> cli "show flow connection src-ip <ip> netmask <number>" will match the packet with netmask
+       b.5.ii> parameter dst-ip has the same netmask semantic to src-ip
+       b.5.iii> cli "show flow connection protocol <low> <high>"
+                if only <low> is set, it will match the packet using exactly the value of <low>
+                if both <low> and <high> are set, it will match the packet using the range [low - high]
+       b.5.iiii> parameter src-port and dst-port have the same low/high semantic to protocol
+
+
+3. how to confirm the flow issue?

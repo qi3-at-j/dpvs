@@ -24,10 +24,19 @@
 #include "inet.h"
 #include "flow.h"
 
+/* define flow synchronized command here */
+
+
 #define number_2_mask(x) (((2<<(x))-1)<<(32-(x)))
 /*** used for get or clear connections ***/
 typedef struct connection_op_para_{
 
+	/* serveral macro defined for operation */
+#define CLR_GET_CONN_SUMMARY        0x0001
+#define CLR_GET_CONN_ALL            0x0002
+#define CLR_GET_CONN_DETAIL         0x0004
+#define CLR_GET_CONN_COUNTER        0x0008
+    uint16_t op;      /* identify the operation */
 	/* serveral macro defined for mask */
 #define CLR_GET_CONN_SRCIP          0x0001
 #define CLR_GET_CONN_SRCIP_MASK     0x0002
@@ -42,8 +51,9 @@ typedef struct connection_op_para_{
 #define CLR_GET_CONN_VRF_ID         0x0400
 #define CLR_GET_CONN_FCFLAG         0x0800
 #define CLR_GET_CONN_FW_POLICY      0x1000
-	uint32_t mask;		/* identify which fitler is set */
+	uint16_t mask;		/* identify which fitler is set */
 
+    uint32_t fcid;      /* flow connection id */
 	/* if address netmask is provided the address is the */
 	/* results applied by the netmask */
 	uint32_t src_ip;	/* source ip address */

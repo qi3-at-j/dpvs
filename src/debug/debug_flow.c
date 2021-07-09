@@ -4,7 +4,7 @@
 #include "parser/flow_cmdline.h"
 #include "debug_flow.h"
 
-uint32_t flow_debug_flag = FLOW_DEBUG_ALL;
+uint32_t flow_debug_flag;
 
 static int
 debug_flow_cli(cmd_blk_t *cbt)
@@ -116,8 +116,9 @@ show_flow_cli(cmd_blk_t *cbt)
 
 exnode(flow_connection);
 EOL_NODE(flow_status_eol, show_flow_cli);
-KW_NODE(flow_status, flow_status_eol, flow_connection, "status", "show flow status");
-KW_NODE(show_flow, flow_status, none, "flow", "show flow related items");
+KW_NODE(flow_status, flow_status_eol, none, "status", "show flow debug status");
+KW_NODE(flow_debug, flow_status, flow_connection, "debug", "show flow debug");
+KW_NODE(show_flow, flow_debug, none, "flow", "show flow related items");
 void
 debug_flow_init(void)
 {

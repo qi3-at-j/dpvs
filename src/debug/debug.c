@@ -222,7 +222,7 @@ show_debug_trace(cmd_blk_t *cbt)
     j = rte_atomic32_read(&debug_index);
     j = (j>=DEBUG_MAX_LINE_CNT)?DEBUG_MAX_LINE_CNT:j;
     for (i=0; i<j; i++) {
-        tyflow_cmdline_printf(cbt->cl, "%s", debug_global_buffer[i]);
+        tyflow_cmdline_printf(cbt->cl, "%4d %s", i, debug_global_buffer[i]);
     }
     tyflow_cmdline_printf(cbt->cl, "total line %d\n", j);
     return 0;

@@ -219,7 +219,7 @@ static int ipv4_local_in(struct rte_mbuf *mbuf)
 
 int ipv4_output_fin2(struct rte_mbuf *mbuf)
 {
-#if 1
+#ifdef TYFLOW 
     conn_sub_t *csp = GET_CSP_FROM_MBUF(mbuf);
     struct route_entry *rt = csp2peer(csp)->route;
 #else

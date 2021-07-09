@@ -120,6 +120,7 @@ typedef struct conn_sub_ {
 #define CSP_SYN_OPEN            0x80
 #define CSP_L2_READY            0x100
 #define CSP_L2INFO_IS_ARP       0x200
+#define CSP_IFP_UPDATE          0x400   /* csp ifp is updated */
     csp_key_t key;
 #define csp_src_ip    key.src_ip
 #define csp_dst_ip    key.dst_ip
@@ -149,15 +150,16 @@ typedef struct flow_connection_ {
     conn_sub_t conn_sub0;
     conn_sub_t conn_sub1;
     struct flow_connection_ *next;
+    struct hlist_node ager_node; /* used to link ager */
     /* fields below "start" is variable */
     char start[0];
+    uint64_t  start_time;
+    uint64_t  duration;
     uint16_t  time;
     uint16_t  time_const;
-    uint64_t  start_time;
-    uint32_t  duration;
     uint32_t  fcflag;
 #define FC_TIME_NO_REFRESH     0x80000000  /* don't refresh timeout if this bit set */
-#define FC_TO_BE_INVALID       0x40000000  /* wait for killing children rtp/rtcp session */
+#define FC_TO_BE_INVALID       0x40000000  /* wait for killing children control/data connection */
 #define FC_LOOP                0x20000000
 #define FC_GEN_GATE            0x10000000  /* set when created a gate */
 #define FC_FROM_GATE           0x08000000  /* set when created from gate */
@@ -168,6 +170,7 @@ typedef struct flow_connection_ {
 #define FC_DATA_CHANNEL        0x00400000
 #define FC_INSTALLED           0x00200000
 #define FC_TUNNEL              0x00100000  /* it is a tunnel connection */
+#define FC_IN_AGER             0x00080000  /* it is a tunnel connection */
     uint64_t byte_cnt;
     uint64_t pkt_cnt;
     uint32_t reason; /* Reasons for closing down a session */
@@ -195,7 +198,13 @@ typedef int (* flow_vector_t)(struct rte_mbuf *mbuf);
 #define FLOW_CONN_HASH_TAB_SIZE    (FLOW_CONN_MAX_NUMBER>>3)   /*64K*/
 #define FLOW_CONN_HASH_TAB_MASK    (FLOW_CONN_HASH_TAB_SIZE-1)
 
-#define FLOW_CONN_NOTIMEOUT   65535     /* indicate no timeout */
+#define FLOW_CONN_AGER_RATE    2        /* indicate ager will be triggered every 2 seconds */
+#define FLOW_CONN_MAXTIMEOUT   64800    /* 129600 sec, exact 36 hours, use this value as hash bucket too */
+#define FLOW_CONN_NOTIMEOUT    65535    /* indicate no timeout */
+#define FLOW_CONN_TCP_TIMEOUT  900  /* 1800 sec, or 30 minutes */
+#define FLOW_CONN_UDP_TIMEOUT  30   /* 60 sec, or 1 minute */
+#define FLOW_CONN_PING_TIMEOUT 5    /* 10 sec */
+#define FLOW_CONN_DEF_TIMEOUT  5    /* 10 sec */
 
 /* per lcore flow connection table */
 RTE_DECLARE_PER_LCORE(flow_connection_t *, flowConnTable);
@@ -206,17 +215,15 @@ RTE_DECLARE_PER_LCORE(struct hlist_head * /* conn_sub_t** */, flow_conn_hash_bas
 /* per lcore flow connection hash cnt table base */
 RTE_DECLARE_PER_LCORE(uint32_t *, flow_conn_hash_cnt_base);
 
-/* per lcore flow connection statistics */
-RTE_DECLARE_PER_LCORE(uint32_t, flow_curr_conn);
-RTE_DECLARE_PER_LCORE(uint32_t, flow_invalid_conn);
-RTE_DECLARE_PER_LCORE(uint32_t, flow_no_conn);
-RTE_DECLARE_PER_LCORE(uint32_t, flow_free_conn);
-
 /* flow is ready to go? */
 RTE_DECLARE_PER_LCORE(uint32_t, flow_status);
 
 /* per lcore flow connection ager */
 RTE_DECLARE_PER_LCORE(struct rte_timer, flow_conn_ager);
+/* per lcore flow connection ager hash tab */
+RTE_DECLARE_PER_LCORE(struct hlist_head *, flow_conn_ager_hash);
+/* per lcore flow connection ager index */
+RTE_DECLARE_PER_LCORE(uint32_t, flow_conn_ager_index);
 
 /* per lcore flow vector list */
 RTE_DECLARE_PER_LCORE(flow_vector_t *, flow_vector_list);
@@ -224,18 +231,74 @@ RTE_DECLARE_PER_LCORE(flow_vector_t *, flow_vector_list);
 /* per lcore flow connection control prototype */
 RTE_DECLARE_PER_LCORE(flow_connection_t, flow_conn_crt_t);
 
+enum {
+    FLOW_TOTAL_CONN,
+    FLOW_CURR_CONN,
+    FLOW_INVALID_CONN,
+    FLOW_NO_CONN,
+    FLOW_FREE_CONN,
+
+    FLOW_ERR_ICMP_HEADER,
+    FLOW_ERR_ICMP_REDIRECT,
+    FLOW_ERR_ICMP_GEN,
+    FLOW_ERR_TO_SELF_DROP,
+    FLOW_ERR_NO_ROUTE,
+    FLOW_ERR_NO_ROUTE_IFP,
+    FLOW_ERR_NO_R_ROUTE,
+    FLOW_ERR_NO_R_ROUTE_IFP,
+    FLOW_ERR_SEND_OUT,
+
+    FLOW_BRK_TO_SELF,
+
+    FLOW_COUNTER_MAX
+};
+
+typedef struct {
+    char *name;
+    uint32_t index;
+    uint32_t counter;
+} name_n_cnt[FLOW_COUNTER_MAX];
+
+static name_n_cnt flow_counter_template __rte_unused = {
+    {"total connection counter:", FLOW_TOTAL_CONN, FLOW_CONN_MAX_NUMBER-1},
+    {"current connection counter:", FLOW_CURR_CONN, 0},
+    {"invalid connection counter:", FLOW_INVALID_CONN, 0},
+    {"no connection counter:", FLOW_NO_CONN, 0},
+    {"free connection counter:", FLOW_FREE_CONN, 0},
+    {"error embed icmp header:", FLOW_ERR_ICMP_HEADER, 0},
+    {"error embed icmp redirect:", FLOW_ERR_ICMP_REDIRECT, 0},
+    {"error icmp generated:", FLOW_ERR_ICMP_GEN, 0},
+    {"error to-self drop:", FLOW_ERR_TO_SELF_DROP, 0},
+    {"error no route:", FLOW_ERR_NO_ROUTE, 0},
+    {"error no route ifp:", FLOW_ERR_NO_ROUTE_IFP, 0},
+    {"error no reverse route:", FLOW_ERR_NO_R_ROUTE, 0},
+    {"error no reverse route ifp:", FLOW_ERR_NO_R_ROUTE_IFP, 0},
+    {"error send out:", FLOW_ERR_SEND_OUT, 0},
+    {"break to-self:", FLOW_BRK_TO_SELF, 0},
+};
+     
+/* per lcore flow connection statistics */
+RTE_DECLARE_PER_LCORE(uint32_t, flow_curr_conn);
+RTE_DECLARE_PER_LCORE(uint32_t, flow_invalid_conn);
+RTE_DECLARE_PER_LCORE(uint32_t, flow_no_conn);
+RTE_DECLARE_PER_LCORE(uint32_t, flow_free_conn);
+RTE_DECLARE_PER_LCORE(name_n_cnt, flow_counter);
+
 #define this_flowConnTable           (RTE_PER_LCORE(flowConnTable))
 #define this_flowConnHead            (RTE_PER_LCORE(flowConnHead))
 #define this_flow_conn_hash_base     (RTE_PER_LCORE(flow_conn_hash_base))
 #define this_flow_conn_hash_cnt_base (RTE_PER_LCORE(flow_conn_hash_cnt_base))
-#define this_flow_curr_conn          (RTE_PER_LCORE(flow_curr_conn))
-#define this_flow_invalid_conn       (RTE_PER_LCORE(flow_invalid_conn))
-#define this_flow_no_conn            (RTE_PER_LCORE(flow_no_conn))
-#define this_flow_free_conn          (RTE_PER_LCORE(flow_free_conn))
 #define this_flow_status             (RTE_PER_LCORE(flow_status))
 #define this_flow_conn_ager          (RTE_PER_LCORE(flow_conn_ager))
+#define this_flow_conn_ager_hash     (RTE_PER_LCORE(flow_conn_ager_hash))
+#define this_flow_conn_ager_index    (RTE_PER_LCORE(flow_conn_ager_index))
 #define this_flow_conn_crt           (&RTE_PER_LCORE(flow_conn_crt_t))
 #define this_flow_vector_list        (RTE_PER_LCORE(flow_vector_list))
+#define this_flow_counter            (RTE_PER_LCORE(flow_counter))
+#define this_flow_curr_conn          (this_flow_counter[FLOW_CURR_CONN].counter)
+#define this_flow_invalid_conn       (this_flow_counter[FLOW_INVALID_CONN].counter)
+#define this_flow_no_conn            (this_flow_counter[FLOW_NO_CONN].counter)
+#define this_flow_free_conn          (this_flow_counter[FLOW_FREE_CONN].counter)
 
 #define csp2base(x) ((flow_connection_t *)((uint64_t)(x) + (x)->base_offset))
 #define csp2peer(x) ((conn_sub_t *)((uint64_t)(x) + (x)->peer_offset))
@@ -263,6 +326,7 @@ static inline int is_tunnel_conn(flow_connection_t *fcp)
 
 #define is_csp_invalid(x)      ((x)->cspflag & CSP_INVALID)
 #define set_csp_invalid(x)     ((x)->cspflag |= CSP_INVALID)
+#define clr_csp_invalid(x)     ((x)->cspflag &= ~CSP_INVALID)
 #define is_fcp_valid(x) \
         (!is_csp_invalid(&x->conn_sub0) && !is_csp_invalid(&x->conn_sub1))
 
@@ -276,12 +340,10 @@ enum {
 };
 #define GET_CSP_FROM_MBUF(x) ((conn_sub_t *)*((uint64_t *)&((x)->dynfield1[RTE_MBUF_CONN_SUB])))
 #define SET_CSP_TO_MBUF(x, csp) \
-    do {                                                                                    \
-        if (flow_debug_flag & FLOW_DEBUG_BASIC) {                                           \
-            conn_sub_t *temp_csp = GET_CSP_FROM_MBUF(x);                                    \
-            flow_debug_trace_no_flag("  set csp to mbuf 0x%llx->0x%llx.\n", temp_csp, csp); \
-        }                                                                                   \
-        (*((uint64_t *)&(x)->dynfield1[RTE_MBUF_CONN_SUB]) = (uint64_t)(csp));              \
+    do {                                                                        \
+        conn_sub_t *temp_csp = GET_CSP_FROM_MBUF(x);                            \
+        flow_print_basic("  set csp to mbuf 0x%llx->0x%llx.\n", temp_csp, csp); \
+        (*((uint64_t *)&(x)->dynfield1[RTE_MBUF_CONN_SUB]) = (uint64_t)(csp));  \
     } while(0)
 #define GET_FC_FROM_MBUF(x) csp2base(GET_CSP_FROM_MBUF(x))
 
@@ -347,12 +409,23 @@ static inline uint32_t ip_ports_form(uint16_t src_port, uint16_t dst_port)
 
 extern void 
 flow_free_this_conn (flow_connection_t *fcp);
+uint16_t
+flow_get_fcp_time(flow_connection_t *fcp);
+void 
+flow_refresh_connection(flow_connection_t *fcp);
+void
+set_fcp_invalid(flow_connection_t *fcp, uint32_t reason);
+uint16_t
+flow_get_default_time(uint8_t proto);
 extern int
 flow_init (void);
 int 
 icmp_ports (struct rte_icmp_hdr *icmp);
 struct rte_ipv4_hdr *
-gen_icmp_lookup_info (struct rte_ipv4_hdr *iphdr, uint32_t *iptr, struct rte_mbuf *mbuf, struct rte_ipv4_hdr *iphdr_inner, uint32_t *ports);
+gen_icmp_lookup_info (struct rte_ipv4_hdr *iphdr, 
+                      uint32_t *iptr, 
+                      struct rte_ipv4_hdr *iphdr_inner, 
+                      uint32_t *ports);
 int
 flow_proc_first_pak(struct rte_mbuf *mbuf);
 int
@@ -378,11 +451,15 @@ flow_first_routing(struct rte_mbuf *mbuf);
 int
 flow_first_fw_entry(struct rte_mbuf *mbuf);
 int
+flow_fast_reverse_routing(struct rte_mbuf *mbuf);
+int
 flow_fast_reinject_out(struct rte_mbuf *mbuf);
 int
 flow_fast_fw_entry(struct rte_mbuf *mbuf);
 int
 flow_fast_send_out(struct rte_mbuf *mbuf);
+void
+flow_install_conn_no_refresh(flow_connection_t *fcp);
 void
 flow_install_conn(flow_connection_t *fcp);
 int

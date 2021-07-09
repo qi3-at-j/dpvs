@@ -114,7 +114,6 @@ struct neighbour_entry {
     uint32_t            que_num;
     uint32_t            state;
     uint32_t            ts;
-    rte_atomic32_t      refcnt;
     uint8_t             flag;
 } __rte_cache_aligned;
 
