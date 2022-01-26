@@ -24,6 +24,7 @@ extern "C" {
 struct cmdline {
 	int s_in;
 	int s_out;
+    int vty;
 	struct rdline rdl;
 	char prompt[RDLINE_PROMPT_SIZE];
 	struct termios oldterm;
@@ -32,6 +33,8 @@ struct cmdline {
 
 struct cmdline *tyflow_cmdline_new(const char *prompt, int s_in, int s_out);
 void tyflow_cmdline_set_prompt(struct cmdline *cl, const char *prompt);
+void
+tyflow_cmdline_show_prompt(struct cmdline *cl);
 void tyflow_cmdline_free(struct cmdline *cl);
 void tyflow_cmdline_printf(const struct cmdline *cl, const char *fmt, ...)
 	__attribute__((format(printf,2,3)));

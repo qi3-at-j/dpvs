@@ -15,6 +15,7 @@
  * GNU General Public License for more details.
  *
  */
+
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1196,3 +1197,4 @@ static void __exit addr_exit(void)
         free(g_nic_list);
     dpip_unregister_obj(&dpip_link);
 }
+

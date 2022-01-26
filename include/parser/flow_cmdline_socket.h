@@ -33,6 +33,7 @@ extern uint32_t cmdbatch_debug_flag;
 
 extern void
 cmd_batch_init(void);
+extern void * fw_cfgd_work(void*);
 
 #ifdef __cplusplus
 }

@@ -80,6 +80,9 @@ get_token(cmdline_parse_inst_t *inst, unsigned int index)
 static inline int
 add_to_res(unsigned int c, uint32_t *res, unsigned int base)
 {
+    if (c < 0 || c > 9) {
+        return -1;
+    }
 	/* overflow */
 	if ( (UINT32_MAX - c) / base < *res ) {
 		return -1;
@@ -325,6 +328,10 @@ parse_it:
 #endif
 }
 
+static inline char test_is_need_main_exec(cmd_node_t *node)
+{
+	return node->need_main_do;
+}
 int
 tyflow_cmdline_parse(struct cmdline *cl, const char * buf, int console)
 {
@@ -413,18 +420,30 @@ tyflow_cmdline_parse(struct cmdline *cl, const char * buf, int console)
         }
     } else if (f) {
 		cmd_blk.cl = cl;
-		ret = f(&cmd_blk);
-        if (!console) {
-            /* curbuf now has a brand new semantic */
-            curbuf = strdup(buf);
-            if (curbuf) {
-                if (curbuf[strlen(curbuf)-1] == '\n')
-                    curbuf[strlen(curbuf)-1] = 0;
-                cmdbatch_debug_trace(CMDBATCH_DEBUG_BASIC, 
-                                     "%s: the command (%s) is issued %d/%s\n", 
-                                     __func__, curbuf, ret,
-                                     ret==0?"successfully":"failed");
-                free(curbuf);
+		if (test_is_need_main_exec(node)){
+			ret = tyflow_send_to_main_do_func(&cmd_blk, f);
+		}else{
+			ret = f(&cmd_blk);
+		}
+		
+        if (cl && cl->vty) {
+#ifdef VTY_SYN
+            close(cl->s_out);
+            cl->s_out = -1;
+#endif
+        } else {
+            if (!console) {
+                /* curbuf now has a brand new semantic */
+                curbuf = strdup(buf);
+                if (curbuf) {
+                    if (curbuf[strlen(curbuf)-1] == '\n')
+                        curbuf[strlen(curbuf)-1] = 0;
+                        cmdbatch_debug_trace(CMDBATCH_DEBUG_BASIC, 
+                                             "%s: the command (%s) is issued %d/%s\n", 
+                                             __func__, curbuf, ret,
+                                             ret==0?"successfully":"failed");
+                    free(curbuf);
+                }
             }
         }
 		return 0;
@@ -478,6 +497,22 @@ tyflow_cmdline_parse(struct cmdline *cl, const char * buf, int console)
 
 	return linelen;
 #endif
+}
+
+static inline int
+str_comm_prefix_len(const char *s1, const char *s2)
+{
+	int len = 0;
+
+    while(*s1 && *s2) {
+        if (*s1 != *s2)
+            break;
+        len++;
+        s1++;
+        s2++;
+    }
+
+    return len;
 }
 
 #pragma GCC push_options
@@ -544,6 +579,9 @@ tyflow_cmdline_complete(struct cmdline *cl, const char *buf, int *action, char *
         }
     }
 
+    char comm_prefix[RDLINE_BUF_SIZE] = {0};            
+    int j, comm_len;
+
     len = 0;
     if (!node_partial_index) {
         if (!(isendofline(*curbuf) || iscomment(*curbuf))) {
@@ -575,15 +613,46 @@ tyflow_cmdline_complete(struct cmdline *cl, const char *buf, int *action, char *
     } else {
         /* node_partial_index > 1 */
         if (*action == CA_APPEND) {
-            *action = CA_NOTIFY;
+            *action = CA_NO;
+            for (i=node_partial_index-1; i>=0; i--) {
+                if (node_partial_match[i]->type != CMD_NODE_TYPE_KW)
+                    break;
+            }
+            /* need all node is CMD_NODE_TYPE_KW */
+            if (i < 0) {
+                strcpy(comm_prefix, node_partial_match[0]->token);
+                for (j = 1; j < node_partial_index; j++) {
+                    comm_len = str_comm_prefix_len(comm_prefix,
+                        node_partial_match[j]->token);        
+                    comm_prefix[comm_len] = 0;
+                    if (comm_len == 0) {
+                        break;
+                    }
+                }
+                if (comm_len > partial_len) {                    
+                    *action |= CA_APPEND;
+                    len += snprintf(dst+len, size-len, "%s",
+                        comm_prefix + partial_len);
+                    dst[len++] = 0;
+                }
+            }
+
+            *action |= CA_NOTIFY;
         }
+
         node = node_partial_match[0];
         for (i=node_partial_index-1; i>=0; i--) {
             if (node_partial_match[i]->type == CMD_NODE_TYPE_KW) {
-                len += snprintf(dst+len, size-len, "%-24s%s\r\n", node_partial_match[i]->token, node_partial_match[i]->help);
+                len += snprintf(dst+len, size-len,
+                    "%-24s%s\r\n",
+                    node_partial_match[i]->token,
+                    node_partial_match[i]->help);
             } else {
-                char *token = cmd_get_value_node_token(node_partial_match[i]);
-                len += snprintf(dst+len, size-len, "%-24s%s\r\n", token, node_partial_match[i]->help);
+                char *token = cmd_get_value_node_token(
+                    node_partial_match[i]);
+                len += snprintf(dst+len, size-len,
+                    "%-24s%s\r\n",
+                    token, node_partial_match[i]->help);
             }
         }
     }
@@ -699,6 +768,8 @@ extern void
 cmd_batch_init(void);
 extern void
 flow_filter_init(void);
+extern void
+flow_l3_cli_init(void);
 void
 cmd_init(void)
 {
@@ -722,5 +793,7 @@ cmd_init(void)
     cmd_dup_child(&cnode(delete), &cnode(create));
 
     add_top_cmd(&cnode(move));
+
+    flow_l3_cli_init();
 }
 

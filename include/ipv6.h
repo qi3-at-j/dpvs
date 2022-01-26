@@ -123,4 +123,8 @@ uint16_t ip6_phdr_cksum(struct ip6_hdr*, uint64_t ol_flags,
 uint16_t ip6_udptcp_cksum(struct ip6_hdr*, const void *l4_hdr,
         uint32_t exthdrlen, uint8_t l4_proto);
 
+struct inet6_protocol *get_inet6_prots_by_hdr(uint8_t nexthdr);
+void rte_rwlock_read_lock_inet6_prot(void);
+void rte_rwlock_read_unlock_inet6_prot(void);
+
 #endif /* __DPVS_IPV6_H__ */

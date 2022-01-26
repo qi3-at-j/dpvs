@@ -1145,6 +1145,7 @@ static struct inet_hook_ops dp_vs_ops[] = {
         .hooknum    = INET_HOOK_PRE_ROUTING,
         .priority   = 99,
     },
+#if 0
     {
         .af         = AF_INET6,
         .hook       = dp_vs_in6,
@@ -1157,10 +1158,15 @@ static struct inet_hook_ops dp_vs_ops[] = {
         .hooknum    = INET_HOOK_PRE_ROUTING,
         .priority   = 99,
     },
+#endif
 };
 
 int dp_vs_init(void)
 {
+#ifndef TYFLOW_LEGACY
+    return EDPVS_OK;
+#endif
+
     int err;
 
     err = dp_vs_proto_init();

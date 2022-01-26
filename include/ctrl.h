@@ -235,7 +235,9 @@ enum {
 
 
 //上面简直混乱，所以新增的类型都放在这里吧，从1000开始
+
 #define MSG_TYPE_GENER_RCU                  1000
+#define MSG_TYPE_CONSOLE                    1001
 
 #define SOCKOPT_VERSION_MAJOR               1
 #define SOCKOPT_VERSION_MINOR               0

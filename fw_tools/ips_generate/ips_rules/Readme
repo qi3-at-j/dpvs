@@ -1,0 +1,17 @@
+
+Step 1
+to_id_name
+-- get apr id:name
+
+Step 2
+to_act
+-- get desc dict
+
+Step 3
+to_detect
+-- get detect dict
+
+Step 4
+to_suricata
+-- tranform ips info to suricata format
+

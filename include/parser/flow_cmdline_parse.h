@@ -277,6 +277,7 @@ typedef struct cmd_node_ {
 	char *token;
 	char *help;
 	cmd_fn_t func;
+	char need_main_do;
 } cmd_node_t;
 
 #define exnode(x) extern cmd_node_t cmd_##x##_node
@@ -310,6 +311,20 @@ exnode(exit);
 		"press <return> to issue the command",  \
 		func                   \
 	};
+
+#define EOL_NODE_NEED_MAIN_EXEC(node, func)   \
+		cmd_node_t cnode(node) = { \
+			NULL,				   \
+			NULL,				   \
+			CMD_NODE_TYPE_EOL,	   \
+			0,					   \
+			0,					   \
+			0,					   \
+			"<return>", 		   \
+			"press <return> to issue the command",	\
+			func,				   \
+			1					   \
+		};
 
 #define KW_NODE_WHICH(node, child, sibl, kw, help, index, which)  \
 	cmd_node_t cnode(node) = { \
@@ -459,6 +474,11 @@ add_move_cmd(cmd_node_t *node);
 
 extern void
 cmd_init(void);
+
+struct console_msg_data{
+	cmd_blk_t cbt;
+	cmd_fn_t func;
+};
 
 #ifdef __cplusplus
 }

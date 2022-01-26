@@ -25,7 +25,7 @@ typedef enum _fw_status_ {
 
 typedef struct _fw_vrf_conf_ {
     fw_status_e status;
-    security_policy_conf_s secpolicy_conf;
+    //security_policy_conf_s secpolicy_conf;
     aspf_policy_conf_s aspf_conf;
 } __rte_cache_aligned fw_vrf_conf_s;
 
@@ -38,9 +38,18 @@ typedef struct _vfw_conf_ {
     fw_vrf_conf_s vrf_conf[FW_VRF_MAX_SIZE];
 } __rte_cache_aligned fw_conf_s;
 
+typedef struct _user_share_info_ {
+    char uuid[64];
+} __rte_cache_aligned user_share_info_s; 
+
+typedef struct _fw_user_info_ {
+    user_share_info_s data[FW_VRF_MAX_SIZE];
+} __rte_cache_aligned fw_user_info_s;
+
 extern int fw_log_type;
 extern uint32_t fw_parse_vrf;
-
+extern unsigned char szSecPolicyTenantID[64];
+extern uint32_t secpolicy_fw_type;
 extern void fw_keyword_value_init(void);
 extern void install_fw_keywords(void);
 
@@ -50,8 +59,10 @@ extern int fw_conf_term(void);
 extern fw_conf_s *fw_conf_get(void);
 extern fw_vrf_conf_s *fw_conf_get_vrf(uint32_t vrf);
 
-extern int fw_vrf_create(uint32_t vrf);
-extern int fw_vrf_delete(uint32_t vrf);
+extern int fw_vrf_create(uint32_t vrf, char *uuid);
+extern int fw_vrf_delete(uint32_t vrf, char *uuid);
+
+extern const char *fw_get_user_id(uint32_t vrf);
 
 extern int fw_conf_init(void);
 extern int fw_conf_term(void);

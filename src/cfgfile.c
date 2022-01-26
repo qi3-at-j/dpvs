@@ -35,6 +35,7 @@
 #include "ipvs/synproxy.h"
 #include "scheduler.h"
 #include "fw_conf/fw_conf.h"
+#include "fw_log.h"
 
 typedef void (*sighandler_t)(int);
 
@@ -94,6 +95,8 @@ static vector_t install_keywords(void)
     install_sublevel_end();
 
     install_ipv6_keywords();
+
+    //install_log_keywords();
 
     /* add by whan */
     install_fw_keywords();

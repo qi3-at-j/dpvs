@@ -38,6 +38,7 @@ struct route_entry {
     struct in_addr src;
     struct netif_port *port;
     rte_atomic32_t refcnt;
+    uint32_t table_id;//for vrf
 };
 
 struct route_entry *route4_local(uint32_t src, struct netif_port *port);
@@ -106,4 +107,5 @@ int route_del(struct in_addr* dest,uint8_t netmask, uint32_t flag,
               struct in_addr* src, unsigned long mtu,short metric);
 
 struct route_entry *route_gfw_net_lookup(const struct in_addr *dest);
+
 #endif

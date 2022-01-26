@@ -53,11 +53,18 @@ enum rdline_status {
 
 struct rdline;
 
+#if 0
 enum complete_action {
     CA_NO,
     CA_APPEND,
     CA_NOTIFY
 };
+#else
+#define CA_NO       0
+#define CA_APPEND   0x01
+#define CA_NOTIFY   0x02
+#endif
+
 
 typedef int (rdline_write_char_t)(struct rdline *rdl, char);
 typedef void (rdline_validate_t)(struct rdline *rdl,

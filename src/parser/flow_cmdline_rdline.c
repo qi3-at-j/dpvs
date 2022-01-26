@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright(c) 2010-2014 Intel Corporation.
  * Copyright (c) 2009, Olivier MATZ <zer0@droids-corp.org>
  * All rights reserved.
@@ -11,10 +12,12 @@
 #include <stdarg.h>
 #include <errno.h>
 #include <ctype.h>
+#include <unistd.h>
 
 #include "parser/flow_cmdline_cirbuf.h"
 #include "parser/flow_cmdline_rdline.h"
 #include "parser/flow_cmdline_vt100.h"
+#include "parser/flow_cmdline.h"
 
 static void rdline_puts(struct rdline *rdl, const char *buf);
 static void rdline_miniprintf(struct rdline *rdl,
@@ -27,6 +30,7 @@ static unsigned int rdline_get_history_size(struct rdline *rdl);
 
 /* isblank() needs _XOPEN_SOURCE >= 600 || _ISOC99_SOURCE, so use our
  * own. */
+#if 0 /* use the definition in flow_cmdline_parse.h*/
 static int
 isblank2(char c)
 {
@@ -35,6 +39,7 @@ isblank2(char c)
 		return 1;
 	return 0;
 }
+#endif
 
 int
 tyflow_rdline_init(struct rdline *rdl,
@@ -176,6 +181,7 @@ tyflow_rdline_char_in(struct rdline *rdl, char c)
 	char tmp;
 	char *buf;
     int action;
+    struct cmdline *cl = rdl->opaque;
 
 	if (!rdl)
 		return -EINVAL;
@@ -283,6 +289,12 @@ tyflow_rdline_char_in(struct rdline *rdl, char c)
 			if(!tyflow_cirbuf_del_tail_safe(&rdl->left)) {
 				rdline_puts(rdl, vt100_bs);
 				display_right_buffer(rdl, 1);
+#ifdef VTY_SYN
+                if (cl->vty) {
+                    close(cl->s_out);
+                    cl->s_out = -1;
+                }
+#endif
 			}
 			break;
 
@@ -368,17 +380,24 @@ tyflow_rdline_char_in(struct rdline *rdl, char c)
 			rdl->left_buf[CIRBUF_GET_LEN(&rdl->left)] = '\0';
 			if (rdl->complete) {
 				char tmp_buf[BUFSIZ] = {0};
+				char *tmp_buf_notify = tmp_buf;
 				int ret, tmp_size;
                 ret = rdl->complete(rdl, rdl->left_buf,
                                     tmp_buf, sizeof(tmp_buf),
                                     &action);
                 if (ret < 0) {
                     tyflow_rdline_redisplay(rdl);
+#ifdef VTY_SYN
+                    if (cl->vty) {
+                        close(cl->s_out);
+                        cl->s_out = -1;
+                    }
+#endif
                     return RDLINE_RES_COMPLETE;
                 }
                 tmp_size = strnlen(tmp_buf, sizeof(tmp_buf));
                 /* add chars */
-                if (action == CA_APPEND) {
+                if (action & CA_APPEND) {
                     i=0;
                     while(CIRBUF_GET_LEN(&rdl->right) + CIRBUF_GET_LEN(&rdl->left) <
                           RDLINE_BUF_SIZE &&
@@ -388,11 +407,26 @@ tyflow_rdline_char_in(struct rdline *rdl, char c)
                         i++;
                     }
                     display_right_buffer(rdl, 1);
-                } else {
+                    tmp_buf_notify = tmp_buf + tmp_size + 1;
+#ifdef VTY_SYN
+                    if (cl->vty) {
+                        close(cl->s_out);
+                        cl->s_out = -1;
+                    }
+#endif
+                }
+
+                if (action & CA_NOTIFY) {
                     rdline_puts(rdl, "\r\n");
-                    for (i=0 ; tmp_buf[i] ; i++)
-                        rdl->write_char(rdl, tmp_buf[i]);
+                    for (i=0 ; tmp_buf_notify[i] ; i++)
+                        rdl->write_char(rdl, tmp_buf_notify[i]);
                     tyflow_rdline_redisplay(rdl);
+#ifdef VTY_SYN
+                    if (cl->vty) {
+                        close(cl->s_out);
+                        cl->s_out = -1;
+                    }
+#endif
                 }
             }
 

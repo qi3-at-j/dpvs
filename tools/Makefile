@@ -18,28 +18,15 @@
 #
 # Makefile for tools
 #
-SUBDIRS = keepalived ipvsadm dpip ud_sock
+SUBDIRS = dpip ud_sock vty
 
-all: config
+all:
 	for i in $(SUBDIRS); do $(MAKE) -C $$i || exit 1; done
-
-config: keepalived_conf
-
-keepalived_conf:
-	if [ ! -f keepalived/Makefile ]; then \
-		cd keepalived; \
-		if [ ! -f keepalived/configure ]; then \
-			./build_setup; \
-		fi; \
-		./configure; \
-		cd -; \
-	fi
 
 clean:
 	for i in $(SUBDIRS); do $(MAKE) -C $$i clean || exit 1; done
 
 install:
-	install -m 744 keepalived/bin/keepalived $(INSDIR)/keepalived
-	install -m 744 ipvsadm/ipvsadm $(INSDIR)/ipvsadm
 	install -m 744 dpip/build/dpip $(INSDIR)/dpip
 	install -m 744 ud_sock/build/test_tyflow_ud_sock $(INSDIR)/test_tyflow_ud_sock
+	install -m 744 vty/build/vty $(INSDIR)/vty

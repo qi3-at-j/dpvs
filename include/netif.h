@@ -17,6 +17,7 @@
  */
 #ifndef __DPVS_NETIF_H__
 #define __DPVS_NETIF_H__
+#include <rte_vxlan.h>
 #include <net/if.h>
 #include "list.h"
 #include "dpdk.h"
@@ -24,6 +25,31 @@
 #include "global_data.h"
 #include "timer.h"
 #include "tc/tc.h"
+#include "session_public.h"
+
+struct mbuf_priv_data {
+    /* vrrp */
+    uint8_t priv_data_vrrp_type;
+    uint8_t priv_data_smac[RTE_ETHER_ADDR_LEN];
+
+    /* vxlan */
+    uint8_t priv_data_family;
+    union inet_addr priv_data_src_addr;
+    union inet_addr priv_data_dst_addr;
+    bool priv_data_is_vxlan;
+    struct rte_vxlan_hdr priv_data_vxlan_hdr;
+    uint8_t priv_data_vxlan_family;
+    union inet_addr priv_data_vxlan_src_addr;
+    union inet_addr priv_data_vxlan_dst_addr;
+
+    /* route */
+    void *p_priv_data_route;
+
+    /* vrf */
+    uint32_t priv_data_table_id;
+} __rte_cache_aligned;
+
+#define MBUF_PRIV2_MIN_SIZE (sizeof(struct mbuf_priv_data) + SESSION_GetMbufSize())
 
 #define RTE_LOGTYPE_NETIF RTE_LOGTYPE_USER1
 
@@ -53,6 +79,8 @@ enum {
     NETIF_PORT_FLAG_TC_INGRESS              = (0x1<<5),
     NETIF_PORT_FLAG_NO_ARP                  = (0x1<<6),
     NETIF_PORT_FLAG_LOOPBACK                = (0x1<<7),
+    NETIF_PORT_FLAG_PROMISC                 = (0x1<<8),
+    NETIF_PORT_FLAG_UP                      = (0x1<<9),
 };
 
 
@@ -234,12 +262,23 @@ union netif_bond {
     } slave;
 } __rte_cache_aligned;
 
+struct dpvs_ndmsg {
+	__u8		ndm_family;
+	__u8		ndm_pad1;
+	__u16		ndm_pad2;
+	__s32		ndm_ifindex;
+	__u16		ndm_state;
+	__u8		ndm_flags;
+	__u8		ndm_type;
+};
+
 struct netif_ops {
     int (*op_init)(struct netif_port *dev);
     int (*op_uninit)(struct netif_port *dev);
     int (*op_open)(struct netif_port *dev);
     int (*op_stop)(struct netif_port *dev);
     int (*op_xmit)(struct rte_mbuf *m, struct netif_port *dev);
+	uint16_t (*op_graph_xmit)(s_nc_param *param, struct rte_mbuf *m, struct netif_port *dev);
 	int (*op_set_mac_address)(struct netif_port *dev,
 						       void *addr);
     int (*op_set_mc_list)(struct netif_port *dev);
@@ -253,6 +292,13 @@ struct netif_ops {
 	int	(*op_change_mtu)(struct netif_port *dev, int new_mtu);
 	int (*op_add_slave)(struct netif_port *dev, struct netif_port *slave_dev);
 	int (*op_del_slave)(struct netif_port *dev, struct netif_port *slave_dev);
+	int	(*op_fdb_add)(struct dpvs_ndmsg *ndm,
+					       struct netif_port *dev,
+					       struct rte_ether_addr *addr,
+					       u16 flags);
+	int (*op_fdb_del)(struct dpvs_ndmsg *ndm,
+					       struct netif_port *dev,
+					       struct rte_ether_addr *addr);
 	int (*op_vlan_rx_add_vid)(struct netif_port *dev, uint16_t vlan_id, int on);
 };
 
@@ -286,7 +332,7 @@ struct netif_port {
     portid_t                id;                         /* device id */
     port_type_t             type;                       /* device type */
     netdev_features_t       offload;                    /* device offload */
-	uint32_t                flags;						//网络设备接口的标识符,其状态类型被定义在<linux/if.h>之中；
+	uint32_t                flags;						/*网络设备接口的标识符,其状态类型被定义�?linux/if.h>之中� */
 	uint32_t                priv_flags;
     int                     nrxq;                       /* rx queue number */
     int                     ntxq;                       /* tx queue numbe */
@@ -314,6 +360,24 @@ struct netif_port {
     struct netif_ops        *netif_ops;
 	void (*destructor)(struct netif_port *dev);
 	rte_atomic32_t      	refcnt;
+    struct list_head	    dev_list;
+    struct list_head	    unreg_list;
+    struct list_head	    todo_list;
+    	/* register/unregister state machine */
+	enum { NETREG_UNINITIALIZED=0,
+	       NETREG_REGISTERED,	/* completed register_netdevice */
+	       NETREG_UNREGISTERING,	/* called unregister_netdevice */
+	       NETREG_UNREGISTERED,	/* completed unregister todo */
+	       NETREG_RELEASED,		/* called free_netdev */
+	       NETREG_DUMMY,		/* dummy device for NAPI poll */
+	} reg_state:8;
+#ifdef CONFIG_NET_NS
+        /* Network namespace this network device is inside */
+        struct net      *nd_net;
+#endif
+    bool dismantle; /* device is going do be freed */
+    struct list_head vrf_list;                          /* insert the vrf list */
+    uint32_t table_id;                                  /* table id for vrf */
 } __rte_cache_aligned;
 
 /**************************** lcore API *******************************/
@@ -332,6 +396,9 @@ bool netif_lcore_is_fwd_worker(lcoreid_t cid);
 void lcore_process_packets(struct netif_queue_conf *qconf, struct rte_mbuf **mbufs,
                            lcoreid_t cid, uint16_t count, bool pkts_from_ring);
 uint32_t netif_get_all_enabled_cores_nb(void);
+int get_lcore_stats(lcoreid_t cid, void **out, size_t *out_len);
+int get_lcore_mask(void **out, size_t *out_len);
+int get_lcore_basic(lcoreid_t cid, void **out, size_t *out_len);
 
 /************************** protocol API *****************************/
 int netif_register_pkt(struct pkt_type *pt);
@@ -363,8 +430,12 @@ struct netif_port *netif_alloc(size_t priv_size, const char *namefmt,
                                unsigned int nrxq, unsigned int ntxq,
                                void (*setup)(struct netif_port *));
 void netif_hold(struct netif_port *dev);
+int netif_refcnt_read(struct netif_port *dev);
+
 portid_t netif_port_count(void);
 int netif_free(struct netif_port *dev);
+int netif_free_rcu(struct netif_port *dev);
+
 int netif_port_register(struct netif_port *dev);
 int netif_port_unregister(struct netif_port *dev);
 
@@ -374,6 +445,13 @@ void netdev_upper_dev_unlink(struct netif_port *dev,
 int netdev_master_upper_dev_link(struct netif_port *dev,
 				 struct netif_port *upper_dev);
 int netif_set_mtu(struct netif_port *dev, int new_mtu);
+int get_port_list(void **out, size_t *out_len);
+int get_port_basic(struct netif_port *port, void **out, size_t *out_len);
+int get_port_stats(struct netif_port *port, void **out, size_t *out_len);
+int get_port_ext_info(struct netif_port *port, void **out, size_t *out_len);
+int get_bond_status(struct netif_port *port, void **out, size_t *out_len);
+
+
 
 /**************************graph API**********************************/
 struct rte_node_ethdev_config *get_node_ethdev_config(void);
@@ -409,6 +487,8 @@ static inline struct netif_tc *netif_tc(struct netif_port *dev)
     return &dev->tc;
 }
 
+struct rte_mempool *get_mbuf_mempool(void);
+
 static inline uint16_t dpvs_rte_eth_dev_count(void)
 {
 #if RTE_VERSION < RTE_VERSION_NUM(18, 11, 0, 0)
@@ -419,5 +499,17 @@ static inline uint16_t dpvs_rte_eth_dev_count(void)
 }
 
 extern bool dp_vs_fdir_filter_enable;
+
+/*************************************************************netif port rcu 相关***********************************************/
+#define PORT_RCU_DQ_SIZE				1024
+#define PORT_RCU_DQ_RECLAIM_THD	    1//256//64
+#define PORT_RCU_DQ_RECLAIM_MAX	    16
+
+void netif_free_defer(struct rte_hash_rcu_config *cfg, struct netif_port *dev);
+void netif_free_defer_dq(void *p, void *element, unsigned int n);
+int netif_port_slave_rcu_reader_register_and_online(void);
+void netif_port_rcu_report_quiescent(lcoreid_t cid);
+
+
 
 #endif /* __DPVS_NETIF_H__ */

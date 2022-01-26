@@ -1,0 +1,35 @@
+-- to_detect
+# generate rule detect file
+#
+# gen_detect_dict.py
+# arg1 input  body_detect
+# arg2 output detect_dict_file
+
+
+-- to_desc
+# generate descption info file
+#
+# gen_desc_info.py
+# arg1 input  body_desc_file
+# arg2 output rule_info_file(for read)
+# arg3 output rule_dict_file
+
+
+-- to_method_target
+# generate method/target dict file by method/target binary file
+#
+# ips_method_target_to_dict.py 
+#   arg1 input  method/target binary file
+#   arg2 output method/target dict file
+
+
+-- to_process
+# generate ips-show rules file
+#
+# ips_integrate.py 
+#   arg1 input json detect file 
+#   arg2 input json descption file 
+#   arg3 input method dict file
+#   arg4 input target dict file
+#   arg5 output ips-show rules file
+

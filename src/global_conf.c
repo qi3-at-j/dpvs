@@ -33,23 +33,24 @@ static void log_current_time(void)
 
 static int set_log_level(char *log_level)
 {
+    //strncmp -> strncasecmp 
     if (!log_level)
         rte_log_set_global_level(RTE_LOG_DEBUG);
-    else if (!strncmp(log_level, "EMERG", strlen("EMERG")))
+    else if (!strncasecmp(log_level, "EMERG", strlen("EMERG")))
         rte_log_set_global_level(RTE_LOG_EMERG);
-    else if (!strncmp(log_level, "ALERT", strlen("ALERT")))
+    else if (!strncasecmp(log_level, "ALERT", strlen("ALERT")))
         rte_log_set_global_level(RTE_LOG_ALERT);
-    else if (!strncmp(log_level, "CRIT", strlen("CRIT")))
+    else if (!strncasecmp(log_level, "CRIT", strlen("CRIT")))
         rte_log_set_global_level(RTE_LOG_CRIT);
-    else if (!strncmp(log_level, "ERR", strlen("ERR")))
+    else if (!strncasecmp(log_level, "ERR", strlen("ERR")))
         rte_log_set_global_level(RTE_LOG_ERR);
-    else if (!strncmp(log_level, "WARNING", strlen("WARNING")))
+    else if (!strncasecmp(log_level, "WARNING", strlen("WARNING")))
         rte_log_set_global_level(RTE_LOG_WARNING);
-    else if (!strncmp(log_level, "NOTICE", strlen("NOTICE")))
+    else if (!strncasecmp(log_level, "NOTICE", strlen("NOTICE")))
         rte_log_set_global_level(RTE_LOG_NOTICE);
-    else if (!strncmp(log_level, "INFO", strlen("INFO")))
+    else if (!strncasecmp(log_level, "INFO", strlen("INFO")))
         rte_log_set_global_level(RTE_LOG_INFO);
-    else if (!strncmp(log_level, "DEBUG", strlen("DEBUG")))
+    else if (!strncasecmp(log_level, "DEBUG", strlen("DEBUG")))
         rte_log_set_global_level(RTE_LOG_DEBUG);
     else {
         RTE_LOG(WARNING, CFG_FILE, "%s: illegal log level: %s\n",

@@ -12,6 +12,7 @@
 #define RCU_LCORE_JOB_MAX          		1
 
 //目前还没找到实现这哥俩的方式，先空操作吧
+
 #define __force 
 #define __rcu
 
@@ -31,8 +32,47 @@
 	__rcu_assign_pointer((p), (v), __rcu)
 
 
-#define rcu_dereference(p)  //目前是空操作，待完善，因为除了alpha的架构，其他架构没有问题。
+#ifdef __CHECKER__
+#define rcu_dereference_sparse(p, space) \
+        ((void)(((typeof(*p) space *)p) == p))
+#else /* #ifdef __CHECKER__ */
+#define rcu_dereference_sparse(p, space)
+#endif /* #else #ifdef __CHECKER__ */
 
+#ifndef ACCESS_ONCE
+#define ACCESS_ONCE(x) (*(volatile typeof(x) *)&(x))
+#endif
+
+#define __rcu_access_pointer(p, space) \
+	({ \
+		typeof(*p) *_________p1 = (typeof(*p)*__force )ACCESS_ONCE(p); \
+		rcu_dereference_sparse(p, space); \
+		((typeof(*p) __force *)(_________p1)); \
+	})
+
+#define rcu_access_pointer(p) __rcu_access_pointer((p), __rcu)
+
+#define rcu_dereference(p)   (p) //目前是空操作，待完善，因为除了alpha的架构，其他架构没有问题�?
+
+
+#define smp_read_barrier_depends()	do {} while (0)
+#define rcu_lockdep_assert(c, s) do { } while (0)
+#define rcu_read_lock_held()  do { } while (0)
+
+#define __rcu_dereference_check(p, c, space) \
+        ({ \
+            typeof(*p) *_________p1 = (typeof(*p)*__force )ACCESS_ONCE(p); \
+            rcu_lockdep_assert(c, "suspicious rcu_dereference_check()" \
+                          " usage"); \
+            rcu_dereference_sparse(p, space); \
+            smp_read_barrier_depends(); \
+            ((typeof(*p) __force  *)(_________p1)); \
+        })
+
+#define rcu_dereference_check(p, c) \
+	__rcu_dereference_check((p), rcu_read_lock_held() || (c), __rcu)
+
+#define rcu_dereference_raw(p) rcu_dereference_check(p, 1) 
 
 /** RCU reclamation modes */
 enum dpvs_general_qsbr_mode {

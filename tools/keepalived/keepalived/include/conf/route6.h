@@ -38,6 +38,7 @@ struct dp_vs_route6_conf {
     struct in6_addr     gateway;
     uint32_t            mtu;
     uint32_t            flags;
+    uint32_t            table_id;
 } __attribute__((__packed__));
 
 struct dp_vs_route6_conf_array {

@@ -125,5 +125,6 @@ static inline void rt6_fill_cfg(struct dp_vs_route6_conf *cf,
 
 void install_route6_keywords(void);
 void route6_keyword_value_init(void);
+inline unsigned int ip6_mtu_forward(struct route6 *rt);
 
 #endif /* __DPVS_ROUTE6_H__ */

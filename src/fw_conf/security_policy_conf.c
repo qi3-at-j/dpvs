@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <assert.h>
-#include <arpa/inet.h>
+//#include <netinet/in.h>
 
 #include <rte_memzone.h>
 #include <rte_mempool.h>
@@ -11,419 +11,229 @@
 #include "fw_conf/fw_conf.h"
 #include "fw_conf/security_policy_conf.h"
 
+#include "../access_control/error.h"
+#include "../access_control/secpolicy_common.h"
+#include "../access_control/secpolicy.h"
+#include "fw_lib.h"
+
+
 #define SEC_POLICY_ZONE_NAME      "security policy conf"
 #define SEC_POLICY_RULE_MP_NAME   "security policy rules"
-#define SEC_POLICY_RULE_MP_SIZE   8192
+#define SEC_POLICY_RULE_MP_SIZE    8192
 
 static uint32_t sec_policy_dir;
+static uint32_t sec_policy_ip_proto;
 static uint32_t rule_id;
+
+static void sec_policy_subnet(vector_t tokens)
+{
+    RTE_LOG(INFO, CFG_FILE, "%s\n", __func__);
+    return;
+}
 
 static void sec_policy_in_handler(vector_t tokens)
 {
-    fw_vrf_conf_s *vrf_conf;
-    security_policy_conf_s *conf;
-    secpolicy_rule_s *pos;
-    secpolicy_rule_s *n;
-
-    vrf_conf = fw_conf_get_vrf(fw_parse_vrf);
-    if (!vrf_conf) {
-        return;
-    }
-
-    conf = &vrf_conf->secpolicy_conf;
-
-    security_policy_write_lock(fw_parse_vrf, 1);
-    /* empty list */
-    list_for_each_entry_safe(pos, n, &conf->head_in, list) {
-        list_del(&pos->list);
-        rte_mempool_put(conf->mp, pos);
-    }
-    security_policy_write_unlock(fw_parse_vrf, 1);
-
     sec_policy_dir = 1;
+
+    RTE_LOG(INFO, CFG_FILE, "%s\n", __func__);
 
     return;
 }
 
 static void sec_policy_out_handler(vector_t tokens)
 {
-    fw_vrf_conf_s *vrf_conf;
-    security_policy_conf_s *conf;
-    secpolicy_rule_s *pos;
-    secpolicy_rule_s *n;
-
-    vrf_conf = fw_conf_get_vrf(fw_parse_vrf);
-    if (!vrf_conf) {
-        return;
-    }
-
-    conf = &vrf_conf->secpolicy_conf;
-
-    security_policy_write_lock(fw_parse_vrf, 0);
-    /* empty list */
-    list_for_each_entry_safe(pos, n, &conf->head_out, list) {
-        list_del(&pos->list);
-        rte_mempool_put(conf->mp, pos);
-    }
-    security_policy_write_unlock(fw_parse_vrf, 0);
-
     sec_policy_dir = 0;
+
+    RTE_LOG(INFO, CFG_FILE, "%s\n", __func__);
 
     return;
 }
 
-int security_policy_rule_modify_status(uint32_t vrf, uint32_t inbound, uint32_t id, uint32_t status)
+static void sec_policy_ipv4_handler(vector_t tokens)
 {
-    fw_vrf_conf_s *vrf_conf;
-    security_policy_conf_s *conf;
-    secpolicy_rule_s *rule = NULL, *tmp;
-    struct list_head *head;
+    sec_policy_ip_proto = 1;
 
-    vrf_conf = fw_conf_get_vrf(vrf);
-    if (!vrf_conf) {
-        return -1;
-    }
+    RTE_LOG(INFO, CFG_FILE, "%s\n", __func__);
 
-    conf = &vrf_conf->secpolicy_conf;
-
-    if (inbound) {
-        head = &conf->head_in;
-    } else {
-        head = &conf->head_out;
-    }
-
-    security_policy_write_lock(vrf, inbound);
-
-    list_for_each_entry_reverse(tmp, head, list) {
-        if (tmp->id == id) {
-            rule = tmp;
-            break;
-        }
-    }
-    if (rule) {
-        rule->status = status;
-    }
-
-    security_policy_write_unlock(vrf, inbound);
-
-    return 0;
+    return;
 }
 
-int security_policy_rule_modify_action(uint32_t vrf, uint32_t inbound, uint32_t id, uint32_t action)
+static void sec_policy_ipv6_handler(vector_t tokens)
 {
-    fw_vrf_conf_s *vrf_conf;
-    security_policy_conf_s *conf;
-    secpolicy_rule_s *rule = NULL, *tmp;
-    struct list_head *head;
+    sec_policy_ip_proto = 0;
 
-    vrf_conf = fw_conf_get_vrf(vrf);
-    if (!vrf_conf) {
-        return -1;
-    }
+    RTE_LOG(INFO, CFG_FILE, "%s\n", __func__);
 
-    conf = &vrf_conf->secpolicy_conf;
-
-    if (inbound) {
-        head = &conf->head_in;
-    } else {
-        head = &conf->head_out;
-    }
-
-    security_policy_write_lock(vrf, inbound);
-
-    list_for_each_entry_reverse(tmp, head, list) {
-        if (tmp->id == id) {
-            rule = tmp;
-            break;
-        }
-    }
-
-    if (rule) {
-        rule->action = action;
-    }
-
-    security_policy_write_unlock(vrf, inbound);
-
-    return 0;
+    return;
 }
 
-int security_policy_rule_modify_service(uint32_t vrf, uint32_t inbound, uint32_t id, uint32_t service)
+static void sec_policy_subnet_ip(vector_t tokens)
 {
-    fw_vrf_conf_s *vrf_conf;
-    security_policy_conf_s *conf;
-    secpolicy_rule_s *rule = NULL, *tmp;
-    struct list_head *head;
+    char *str = set_value(tokens);
+    CHAR *pc;
+    IP_ADDR_MASK_S stIPAddrMask;
+    IP_ADDR_S stIPAddr;
 
-    vrf_conf = fw_conf_get_vrf(vrf);
-    if (!vrf_conf) {
-        return -1;
+    if (true != FWLIB_Check_IPv4AndMask_IsLegal(str))
+    {
+        FREE_PTR(str);
+        return;
     }
 
-    conf = &vrf_conf->secpolicy_conf;
-
-    if (inbound) {
-        head = &conf->head_in;
-    } else {
-        head = &conf->head_out;
-    }
-
-    security_policy_write_lock(vrf, inbound);
-
-    list_for_each_entry_reverse(tmp, head, list) {
-        if (tmp->id == id) {
-            rule = tmp;
-            break;
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        stIPAddrMask.stIPAddr.uiIPType = IPPROTO_IP;
+        if (strchr(str, '/'))
+        {
+            /* example, 1.1.1.1/24 */
+            pc = strtok(str, "/");
+            inet_pton(AF_INET, pc, &stIPAddrMask.stIPAddr._ip_data.stIP4Addr);
+            pc = strtok(NULL, "/");
+            stIPAddrMask.uiIPMaskLen = atoi(pc);
         }
+        else
+        {
+            /* example, 1.1.1.1 */
+            inet_pton(AF_INET, str, &stIPAddrMask.stIPAddr._ip_data.stIP4Addr);
+            stIPAddrMask.uiIPMaskLen = 32;
+        }
+
+        (void)SecPolicy_VPCFlow_AddPubIP(fw_parse_vrf, &stIPAddrMask);
+    }
+    else if (secpolicy_fw_type == SECPOLICY_TYPE_EXTBODER)
+    {
+        stIPAddr.uiIPType = IPPROTO_IP;
+        if (strchr(str, '/'))
+        {
+            /* example, 1.1.1.1/24 */
+            pc = strtok(str, "/");
+            inet_pton(AF_INET, pc, &stIPAddr._ip_data.stIP4Addr);
+        }
+        else
+        {
+            /* example, 1.1.1.1 */
+            inet_pton(AF_INET, str, &stIPAddr._ip_data.stIP4Addr);
+        }
+        (void)SecPolicy_ExtFlow_AddPubIP(szSecPolicyTenantID, &stIPAddr);
     }
 
-    if (rule) {
-        rule->service = service;
-    }
-
-    security_policy_write_unlock(vrf, inbound);
-
-    return 0;
+    FREE_PTR(str);
+    return;
 }
 
-int security_policy_rule_modify_dst_ip(uint32_t vrf, uint32_t inbound, uint32_t id, cidr_st *dst_ip)
+static void sec_policy_subnet_ipv6(vector_t tokens)
 {
-    fw_vrf_conf_s *vrf_conf;
-    security_policy_conf_s *conf;
-    secpolicy_rule_s *rule = NULL, *tmp;
-    struct list_head *head;
+    char *str = set_value(tokens);
+    CHAR *pc;
+    IP_ADDR_MASK_S stIPAddrMask;
+    IP_ADDR_S stIPAddr;
 
-    vrf_conf = fw_conf_get_vrf(vrf);
-    if (!vrf_conf) {
-        return -1;
+    if (true != FWLIB_Check_IPv6AndPrefix_IsLegal(str))
+    {
+        FREE_PTR(str);
+        return;
     }
 
-    conf = &vrf_conf->secpolicy_conf;
-
-    if (inbound) {
-        head = &conf->head_in;
-    } else {
-        head = &conf->head_out;
-    }
-
-    security_policy_write_lock(vrf, inbound);
-
-    list_for_each_entry_reverse(tmp, head, list) {
-        if (tmp->id == id) {
-            rule = tmp;
-            break;
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        stIPAddrMask.stIPAddr.uiIPType = IPPROTO_IPV6;
+        
+        if (strchr(str, '/'))
+        {
+            /* example, 1::2/64 */
+            pc = strtok(str, "/");
+            inet_pton(AF_INET6, pc, &stIPAddrMask.stIPAddr._ip_data.stIP6Addr);
+            pc = strtok(NULL, "/");
+            stIPAddrMask.uiIPMaskLen = atoi(pc);
         }
-    }
-
-    if (rule) {
-        rule->dst_ip = *dst_ip;
-    }
-
-    security_policy_write_unlock(vrf, inbound);
-
-    return 0;
-}
-
-int security_policy_rule_modify_dst_ip6(uint32_t vrf, uint32_t inbound, uint32_t id, cidr_st *dst_ip6)
-{
-    fw_vrf_conf_s *vrf_conf;
-    security_policy_conf_s *conf;
-    secpolicy_rule_s *rule = NULL, *tmp;
-    struct list_head *head;
-
-    vrf_conf = fw_conf_get_vrf(vrf);
-    if (!vrf_conf) {
-        return -1;
-    }
-
-    conf = &vrf_conf->secpolicy_conf;
-
-    if (inbound) {
-        head = &conf->head_in;
-    } else {
-        head = &conf->head_out;
-    }
-
-    security_policy_write_lock(vrf, inbound);
-
-    list_for_each_entry_reverse(tmp, head, list) {
-        if (tmp->id == id) {
-            rule = tmp;
-            break;
+        else
+        {
+            /* example, 1::2 */
+            inet_pton(AF_INET6, str, &stIPAddrMask.stIPAddr._ip_data.stIP6Addr);
+            stIPAddrMask.uiIPMaskLen = 128;
         }
+
+        (void)SecPolicy_VPCFlow_AddPubIP(fw_parse_vrf, &stIPAddrMask);
     }
-
-    if (rule) {
-        rule->dst_ip6 = *dst_ip6;
-    }
-
-    security_policy_write_unlock(vrf, inbound);
-
-    return 0;
-}
-
-int security_policy_rule_modify_src_ip(uint32_t vrf, uint32_t inbound, uint32_t id, cidr_st *src_ip)
-{
-    fw_vrf_conf_s *vrf_conf;
-    security_policy_conf_s *conf;
-    secpolicy_rule_s *rule = NULL, *tmp;
-    struct list_head *head;
-
-    vrf_conf = fw_conf_get_vrf(vrf);
-    if (!vrf_conf) {
-        return -1;
-    }
-
-    conf = &vrf_conf->secpolicy_conf;
-
-    if (inbound) {
-        head = &conf->head_in;
-    } else {
-        head = &conf->head_out;
-    }
-
-    security_policy_write_lock(vrf, inbound);
-
-    list_for_each_entry_reverse(tmp, head, list) {
-        if (tmp->id == id) {
-            rule = tmp;
-            break;
+    else if (secpolicy_fw_type == SECPOLICY_TYPE_EXTBODER)
+    {
+        stIPAddr.uiIPType = IPPROTO_IPV6;
+        
+        if (strchr(str, '/'))
+        {
+            /* example, 1::2/64 */
+            pc = strtok(str, "/");
+            inet_pton(AF_INET6, pc, &stIPAddr._ip_data.stIP6Addr);
         }
-    }
-
-    if (rule) {
-        rule->src_ip = *src_ip;
-    }
-
-    security_policy_write_unlock(vrf, inbound);
-
-    return 0;
-}
-
-int security_policy_rule_modify_src_ip6(uint32_t vrf, uint32_t inbound, uint32_t id, cidr_st *src_ip6)
-{
-    fw_vrf_conf_s *vrf_conf;
-    security_policy_conf_s *conf;
-    secpolicy_rule_s *rule = NULL, *tmp;
-    struct list_head *head;
-
-    vrf_conf = fw_conf_get_vrf(vrf);
-    if (!vrf_conf) {
-        return -1;
-    }
-
-    conf = &vrf_conf->secpolicy_conf;
-
-    if (inbound) {
-        head = &conf->head_in;
-    } else {
-        head = &conf->head_out;
-    }
-
-    security_policy_write_lock(vrf, inbound);
-
-    list_for_each_entry_reverse(tmp, head, list) {
-        if (tmp->id == id) {
-            rule = tmp;
-            break;
+        else
+        {
+            /* example, 1::2 */
+            inet_pton(AF_INET6, str, &stIPAddr._ip_data.stIP6Addr);
         }
+        (void)SecPolicy_ExtFlow_AddPubIP(szSecPolicyTenantID, &stIPAddr);
     }
 
-    if (rule) {
-        rule->src_ip6 = *src_ip6;
-    }
-
-    security_policy_write_unlock(vrf, inbound);
-
-    return 0;
+    FREE_PTR(str);
+    return;
 }
-
-int security_policy_rule_modify_src_port(uint32_t vrf, uint32_t inbound, uint32_t id, uint32_t port_min, uint32_t port_max)
-{
-    fw_vrf_conf_s *vrf_conf;
-    security_policy_conf_s *conf;
-    secpolicy_rule_s *rule = NULL, *tmp;
-    struct list_head *head;
-
-    vrf_conf = fw_conf_get_vrf(vrf);
-    if (!vrf_conf) {
-        return -1;
-    }
-
-    conf = &vrf_conf->secpolicy_conf;
-
-    if (inbound) {
-        head = &conf->head_in;
-    } else {
-        head = &conf->head_out;
-    }
-
-    security_policy_write_lock(vrf, inbound);
-
-    list_for_each_entry_reverse(tmp, head, list) {
-        if (tmp->id == id) {
-            rule = tmp;
-            break;
-        }
-    }
-
-    if (rule) {
-        rule->src_min_port = port_min;
-        rule->src_max_port = port_max;
-    }
-
-    security_policy_write_unlock(vrf, inbound);
-
-    return 0;
-}
-
-int security_policy_rule_modify_dst_port(uint32_t vrf, uint32_t inbound, uint32_t id, uint32_t port_min, uint32_t port_max)
-{
-    fw_vrf_conf_s *vrf_conf;
-    security_policy_conf_s *conf;
-    secpolicy_rule_s *rule = NULL, *tmp;
-    struct list_head *head;
-
-    vrf_conf = fw_conf_get_vrf(vrf);
-    if (!vrf_conf) {
-        return -1;
-    }
-
-    conf = &vrf_conf->secpolicy_conf;
-
-    if (inbound) {
-        head = &conf->head_in;
-    } else {
-        head = &conf->head_out;
-    }
-
-    security_policy_write_lock(vrf, inbound);
-
-    list_for_each_entry_reverse(tmp, head, list) {
-        if (tmp->id == id) {
-            rule = tmp;
-            break;
-        }
-    }
-
-    if (rule) {
-        rule->dst_min_port = port_min;
-        rule->dst_max_port = port_max;
-    }
-
-    security_policy_write_unlock(vrf, inbound);
-
-    return 0;
-}
-
-
 
 static void rule_handler(vector_t tokens)
 {
     char *str = set_value(tokens);
+    SECPOLICY_RULE_CFG_S stRuleCfg;
+
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw vrf %d %s %s %s\n", __func__, 
+                                                 fw_parse_vrf,
+                                                 sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                 sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                 str);
+    }
+    else
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw tenant %s %s %s %s\n", __func__, 
+                                                 szSecPolicyTenantID,
+                                                 sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                 sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                 str);
+    }
 
     rule_id = atoi(str);
 
-    security_policy_rule_create(fw_parse_vrf, sec_policy_dir, rule_id);
+    memset(&stRuleCfg, 0, sizeof(stRuleCfg));
+    stRuleCfg.enFwType = secpolicy_fw_type;
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        stRuleCfg.uiVxlanID = fw_parse_vrf;
+    }
+    else if (secpolicy_fw_type == SECPOLICY_TYPE_EXTBODER)
+    {
+        memcpy(stRuleCfg.szTenantID, szSecPolicyTenantID, TENANT_ID_MAX+1);
+    }
+    stRuleCfg.uiRuleID = rule_id;
+    stRuleCfg.enActionType = SECPOLICY_ACTION_DENY;
+    stRuleCfg.stL4Info.ucProtocol = INVALID_TCPIP_PROTOCOL_ID;
+
+    if (1 == sec_policy_ip_proto)
+    {
+        stRuleCfg.uiIPType = IPPROTO_IP;
+    }
+    else
+    {
+        stRuleCfg.uiIPType = IPPROTO_IPV6;
+    }
+    
+    if (1 == sec_policy_dir) 
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_IN2OUT;
+    } 
+    else
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_OUT2IN;
+    }
+
+    (void)SecPolicy_Conf_AddRule(&stRuleCfg);
 
     FREE_PTR(str);
 
@@ -434,14 +244,63 @@ static void status_handler(vector_t tokens)
 {
     char *str = set_value(tokens);
     uint32_t status;
+    SECPOLICY_RULE_CFG_S stRuleCfg;
 
-    if (0 == strncmp(str, "enable", strlen("enable"))) {
-        status = 1;
-    } else {
-        status = 0;
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw vrf %d %s %s %d status %s\n", __func__, 
+                                                        fw_parse_vrf,
+                                                        sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                        sec_policy_dir ? "in2out-rule":"out2in-rule", rule_id, str);
+    }
+    else
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw tenant %s %s %s %d status %s\n", __func__, 
+                                                        szSecPolicyTenantID,
+                                                        sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                        sec_policy_dir ? "in2out-rule":"out2in-rule", rule_id, str);
     }
 
-    security_policy_rule_modify_status(fw_parse_vrf, sec_policy_dir, rule_id, status);
+    memset(&stRuleCfg, 0, sizeof(stRuleCfg));
+    stRuleCfg.enFwType = secpolicy_fw_type;
+    if (1 == sec_policy_dir) 
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_IN2OUT;
+    } 
+    else
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_OUT2IN;
+    }
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        stRuleCfg.uiVxlanID = fw_parse_vrf;
+    }
+    else if (secpolicy_fw_type == SECPOLICY_TYPE_EXTBODER)
+    {
+        memcpy(stRuleCfg.szTenantID, szSecPolicyTenantID, TENANT_ID_MAX+1);
+    }
+    stRuleCfg.uiRuleID  = rule_id;
+
+    if (1 == sec_policy_ip_proto)
+    {
+        stRuleCfg.uiIPType = IPPROTO_IP;
+    }
+    else
+    {
+        stRuleCfg.uiIPType = IPPROTO_IPV6;
+    }
+
+    if (0 == strncmp(str, "enable", strlen("enable"))) 
+    {
+        stRuleCfg.bIsEnable = BOOL_TRUE;
+    } 
+    else 
+    {
+        stRuleCfg.bIsEnable = BOOL_FALSE;
+    }
+
+    stRuleCfg.uiKeyMask |= SECPOLICY_PACKET_MATCH_TYPE_STATUS;
+    (void)SecPolicy_Conf_MdyRulePara(&stRuleCfg, BOOL_FALSE);
 
     FREE_PTR(str);
 
@@ -452,14 +311,67 @@ static void action_handler(vector_t tokens)
 {
     char *str = set_value(tokens);
     uint32_t action;
+    SECPOLICY_RULE_CFG_S stRuleCfg;
 
-    if (0 == strncmp(str, "drop", strlen("drop"))) {
-        action = 1;
-    } else {
-        action = 0;
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw vrf %d %s %s %d action %s\n", __func__, 
+                                                        fw_parse_vrf,
+                                                        sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                        sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                        rule_id, 
+                                                        str);
+    }
+    else
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw tenant %s %s %s %d action %s\n", __func__, 
+                                                                szSecPolicyTenantID,
+                                                                sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                                sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                                rule_id, 
+                                                                str);
     }
 
-    security_policy_rule_modify_action(fw_parse_vrf, sec_policy_dir, rule_id, action);
+    memset(&stRuleCfg, 0, sizeof(stRuleCfg));
+    stRuleCfg.enFwType = secpolicy_fw_type;
+    if (1 == sec_policy_dir) 
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_IN2OUT;
+    } 
+    else
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_OUT2IN;
+    }
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        stRuleCfg.uiVxlanID = fw_parse_vrf;
+    }
+    else if (secpolicy_fw_type == SECPOLICY_TYPE_EXTBODER)
+    {
+        memcpy(stRuleCfg.szTenantID, szSecPolicyTenantID, TENANT_ID_MAX+1);
+    }
+    stRuleCfg.uiRuleID  = rule_id;
+
+    if (1 == sec_policy_ip_proto)
+    {
+        stRuleCfg.uiIPType = IPPROTO_IP;
+    }
+    else
+    {
+        stRuleCfg.uiIPType = IPPROTO_IPV6;
+    }
+
+    if (0 == strncmp(str, "drop", strlen("drop"))) 
+    {
+        stRuleCfg.enActionType = SECPOLICY_ACTION_DENY;
+    } 
+    else 
+    {
+        stRuleCfg.enActionType = SECPOLICY_ACTION_PERMIT;
+    }
+    
+    stRuleCfg.uiKeyMask |= SECPOLICY_PACKET_MATCH_TYPE_ACTION;
+    (void)SecPolicy_Conf_MdyRulePara(&stRuleCfg, BOOL_FALSE);
 
     FREE_PTR(str);
 
@@ -470,20 +382,68 @@ static void service_handler(vector_t tokens)
 {
     char *str = set_value(tokens);
     uint32_t service = 0;
+    SECPOLICY_RULE_CFG_S stRuleCfg;
+
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw vrf %d %s %s %d service %s\n", __func__, 
+                                                                  fw_parse_vrf,
+                                                                  sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                                  sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                                  rule_id, 
+                                                                  str);
+    }
+    else
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw tenant %s %s %s %d service %s\n", __func__, 
+                                                                  szSecPolicyTenantID,
+                                                                  sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                                  sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                                  rule_id, 
+                                                                  str);
+    }
+
+    memset(&stRuleCfg, 0, sizeof(stRuleCfg));
+    stRuleCfg.enFwType = secpolicy_fw_type;
+    if (1 == sec_policy_dir) 
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_IN2OUT;
+    } 
+    else
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_OUT2IN;
+    }
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        stRuleCfg.uiVxlanID = fw_parse_vrf;
+    }
+    else if (secpolicy_fw_type == SECPOLICY_TYPE_EXTBODER)
+    {
+        memcpy(stRuleCfg.szTenantID, szSecPolicyTenantID, TENANT_ID_MAX+1);
+    }
+    stRuleCfg.uiRuleID  = rule_id;
+
+    if (1 == sec_policy_ip_proto)
+    {
+        stRuleCfg.uiIPType = IPPROTO_IP;
+    }
+    else
+    {
+        stRuleCfg.uiIPType = IPPROTO_IPV6;
+    }
 
     if (0 == strncmp(str, "tcp", strlen("tcp"))) {
-        service = 1;
+        stRuleCfg.stL4Info.ucProtocol = IPPROTO_TCP;
+    }else if (0 == strncmp(str, "udp", strlen("udp"))) {
+        stRuleCfg.stL4Info.ucProtocol = IPPROTO_UDP;
+    }else if (0 == strncmp(str, "icmp", strlen("icmp"))) {
+        stRuleCfg.stL4Info.ucProtocol = IPPROTO_ICMP;
+    }else if (0 == strncmp(str, "icmpv6", strlen("icmpv6"))) {
+        stRuleCfg.stL4Info.ucProtocol = IPPROTO_ICMPV6;
     }
-
-    if (0 == strncmp(str, "udp", strlen("udp"))) {
-        service = 2;
-    }
-
-    if (0 == strncmp(str, "icmp", strlen("icmp"))) {
-        service = 3;
-    }
-
-    security_policy_rule_modify_service(fw_parse_vrf, sec_policy_dir, rule_id, service);
+   
+    stRuleCfg.uiKeyMask |= SECPOLICY_PACKET_MATCH_TYPE_SERVICE;
+    (void)SecPolicy_Conf_MdyRulePara(&stRuleCfg, BOOL_FALSE);
 
     FREE_PTR(str);
 
@@ -495,14 +455,61 @@ static void dst_ip_handler(vector_t tokens)
     cidr_st ip = {0};
     char *str = set_value(tokens);
     char *pos;
-    
+    SECPOLICY_RULE_CFG_S stRuleCfg;
+
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw vrf %d %s %s %d dst-ip %s\n", __func__, 
+                                                        fw_parse_vrf,
+                                                        sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                        sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                        rule_id, 
+                                                        str);
+    }
+    else
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw tenant %s %s %s %d dst-ip %s\n", __func__, 
+                                                        szSecPolicyTenantID,
+                                                        sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                        sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                        rule_id, 
+                                                        str);
+    }
+    memset(&stRuleCfg, 0, sizeof(stRuleCfg));
+    stRuleCfg.enFwType = secpolicy_fw_type;
+    if (1 == sec_policy_dir) 
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_IN2OUT;
+    } 
+    else
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_OUT2IN;
+    }
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        stRuleCfg.uiVxlanID = fw_parse_vrf;
+    }
+    else if (secpolicy_fw_type == SECPOLICY_TYPE_EXTBODER)
+    {
+        memcpy(stRuleCfg.szTenantID, szSecPolicyTenantID, TENANT_ID_MAX+1);
+    }
+    stRuleCfg.uiRuleID  = rule_id;
+    stRuleCfg.uiIPType = IPPROTO_IP;
+
     pos = strchr(str, '/');
     if (pos) {
         *pos = 0;
         inet_pton(AF_INET, str, &ip.addr.ip4);
         ip.prefixlen = atoi(++pos);
-        security_policy_rule_modify_dst_ip(fw_parse_vrf, sec_policy_dir, rule_id, &ip);
     }
+
+    stRuleCfg.stDst.enIPType = MULTITYPE_SINGLEIP;
+    stRuleCfg.stDst._multi_ip_type = IPPROTO_IP;
+    stRuleCfg.stDst._multi_ip4_addr = ip.addr.ip4.s_addr;
+    stRuleCfg.stDst.uiIPMaskLen = ip.prefixlen;
+
+    stRuleCfg.uiKeyMask |= SECPOLICY_PACKET_MATCH_TYPE_DIP;
+    (void)SecPolicy_Conf_MdyRulePara(&stRuleCfg, BOOL_FALSE);
 
     FREE_PTR(str);
 
@@ -514,14 +521,62 @@ static void src_ip_handler(vector_t tokens)
     cidr_st ip = {0};
     char *str = set_value(tokens);
     char *pos;
+    SECPOLICY_RULE_CFG_S stRuleCfg;
+
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw vrf %d %s %s %d src-ip %s\n", __func__, 
+                                                        fw_parse_vrf,
+                                                        sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                        sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                        rule_id, 
+                                                        str);
+    }
+    else
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw tenant %s %s %s %d src-ip %s\n", __func__, 
+                                                        szSecPolicyTenantID,
+                                                        sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                        sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                        rule_id, 
+                                                        str);
+    }
     
+    memset(&stRuleCfg, 0, sizeof(stRuleCfg));
+    stRuleCfg.enFwType = secpolicy_fw_type;
+    if (1 == sec_policy_dir) 
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_IN2OUT;
+    } 
+    else
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_OUT2IN;
+    }
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        stRuleCfg.uiVxlanID = fw_parse_vrf;
+    }
+    else if (secpolicy_fw_type == SECPOLICY_TYPE_EXTBODER)
+    {
+        memcpy(stRuleCfg.szTenantID, szSecPolicyTenantID, TENANT_ID_MAX+1);
+    }
+    stRuleCfg.uiRuleID  = rule_id;
+    stRuleCfg.uiIPType = IPPROTO_IP;
+
     pos = strchr(str, '/');
     if (pos) {
         *pos = 0;
         inet_pton(AF_INET, str, &ip.addr.ip4);
         ip.prefixlen = atoi(++pos);
-        security_policy_rule_modify_src_ip(fw_parse_vrf, sec_policy_dir, rule_id, &ip);
     }
+
+    stRuleCfg.stSrc.enIPType = MULTITYPE_SINGLEIP;
+    stRuleCfg.stSrc._multi_ip_type = IPPROTO_IP;
+    stRuleCfg.stSrc._multi_ip4_addr = ip.addr.ip4.s_addr;
+    stRuleCfg.stSrc.uiIPMaskLen = ip.prefixlen;
+
+    stRuleCfg.uiKeyMask |= SECPOLICY_PACKET_MATCH_TYPE_SIP;
+    (void)SecPolicy_Conf_MdyRulePara(&stRuleCfg, BOOL_FALSE);
 
     FREE_PTR(str);
 
@@ -533,14 +588,59 @@ static void dst_ip6_handler(vector_t tokens)
     cidr_st ip = {0};
     char *str = set_value(tokens);
     char *pos;
-    
+    SECPOLICY_RULE_CFG_S stRuleCfg;
+
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw vrf %d %s %s %d dst-ip6 %s\n", __func__, 
+                                                        fw_parse_vrf,
+                                                        sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                        sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                        rule_id, 
+                                                        str);
+    }
+    else
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw tenant %s %s %s %d dst-ip6 %s\n", __func__, 
+                                                        szSecPolicyTenantID,
+                                                        sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                        sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                        rule_id, 
+                                                        str);
+    }
+    memset(&stRuleCfg, 0, sizeof(stRuleCfg));
+    stRuleCfg.enFwType = secpolicy_fw_type;
+    if (1 == sec_policy_dir) 
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_IN2OUT;
+    } 
+    else
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_OUT2IN;
+    }
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        stRuleCfg.uiVxlanID = fw_parse_vrf;
+    }
+    else if (secpolicy_fw_type == SECPOLICY_TYPE_EXTBODER)
+    {
+        memcpy(stRuleCfg.szTenantID, szSecPolicyTenantID, TENANT_ID_MAX+1);
+    }
+    stRuleCfg.uiRuleID  = rule_id;
+    stRuleCfg.uiIPType = IPPROTO_IPV6;
+
+    stRuleCfg.stDst.enIPType = MULTITYPE_SINGLEIP;
+    stRuleCfg.stDst._multi_ip_type = IPPROTO_IPV6;
     pos = strchr(str, '/');
     if (pos) {
         *pos = 0;
-        inet_pton(AF_INET6, str, &ip.addr.ip6);
-        ip.prefixlen = atoi(++pos);
-        security_policy_rule_modify_dst_ip6(fw_parse_vrf, sec_policy_dir, rule_id, &ip);
+        inet_pton(AF_INET6, str, &stRuleCfg.stDst._multi_ip.stIPAddr._ip_data.stIP6Addr);
+        stRuleCfg.stDst.uiIPMaskLen = atoi(++pos);
     }
+
+    stRuleCfg.uiKeyMask |= SECPOLICY_PACKET_MATCH_TYPE_DIP;
+    (void)SecPolicy_Conf_MdyRulePara(&stRuleCfg, BOOL_FALSE);
+    
 
     FREE_PTR(str);
 
@@ -552,14 +652,59 @@ static void src_ip6_handler(vector_t tokens)
     cidr_st ip = {0};
     char *str = set_value(tokens);
     char *pos;
+    SECPOLICY_RULE_CFG_S stRuleCfg;
+
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw vrf %d %s %s %d src-ip6 %s\n", __func__, 
+                                                        fw_parse_vrf,
+                                                        sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                        sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                        rule_id, 
+                                                        str);
+    }
+    else
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw tenant %s %s %s %d src-ip6 %s\n", __func__, 
+                                                        szSecPolicyTenantID,
+                                                        sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                        sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                        rule_id, 
+                                                        str);
+    }
     
+    memset(&stRuleCfg, 0, sizeof(stRuleCfg));
+    stRuleCfg.enFwType = secpolicy_fw_type;
+    if (1 == sec_policy_dir) 
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_IN2OUT;
+    } 
+    else
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_OUT2IN;
+    }
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        stRuleCfg.uiVxlanID = fw_parse_vrf;
+    }
+    else if (secpolicy_fw_type == SECPOLICY_TYPE_EXTBODER)
+    {
+        memcpy(stRuleCfg.szTenantID, szSecPolicyTenantID, TENANT_ID_MAX+1);
+    }
+    stRuleCfg.uiRuleID  = rule_id;
+    stRuleCfg.uiIPType = IPPROTO_IPV6;
+
+    stRuleCfg.stSrc.enIPType = MULTITYPE_SINGLEIP;
+    stRuleCfg.stSrc._multi_ip_type = IPPROTO_IPV6;
     pos = strchr(str, '/');
     if (pos) {
         *pos = 0;
-        inet_pton(AF_INET6, str, &ip.addr.ip6);
-        ip.prefixlen = atoi(++pos);
-        security_policy_rule_modify_src_ip6(fw_parse_vrf, sec_policy_dir, rule_id, &ip);
+        inet_pton(AF_INET6, str, &stRuleCfg.stSrc._multi_ip.stIPAddr._ip_data.stIP6Addr);
+        stRuleCfg.stSrc.uiIPMaskLen = atoi(++pos);
     }
+
+    stRuleCfg.uiKeyMask |= SECPOLICY_PACKET_MATCH_TYPE_SIP;
+    (void)SecPolicy_Conf_MdyRulePara(&stRuleCfg, BOOL_FALSE);
 
     FREE_PTR(str);
 
@@ -573,6 +718,56 @@ static void dst_port_handler(vector_t tokens)
     uint32_t port_min;
     uint32_t port_max;
     char *p;
+    SECPOLICY_RULE_CFG_S stRuleCfg;
+
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw vrf %d %s %s %d dst-port %s\n", __func__, 
+                                                        fw_parse_vrf,
+                                                        sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                        sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                        rule_id, 
+                                                        str);
+    }
+    else
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw tenant %s %s %s %d dst-port %s\n", __func__, 
+                                                        szSecPolicyTenantID,
+                                                        sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                        sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                        rule_id, 
+                                                        str);
+    }
+    
+    memset(&stRuleCfg, 0, sizeof(stRuleCfg));
+    stRuleCfg.enFwType = secpolicy_fw_type;
+    if (1 == sec_policy_dir) 
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_IN2OUT;
+    } 
+    else
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_OUT2IN;
+    }
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        stRuleCfg.uiVxlanID = fw_parse_vrf;
+    }
+    else if (secpolicy_fw_type == SECPOLICY_TYPE_EXTBODER)
+    {
+        memcpy(stRuleCfg.szTenantID, szSecPolicyTenantID, TENANT_ID_MAX+1);
+    }
+    stRuleCfg.uiRuleID  = rule_id;
+
+    if (1 == sec_policy_ip_proto)
+    {
+        stRuleCfg.uiIPType = IPPROTO_IP;
+    }
+    else
+    {
+        stRuleCfg.uiIPType = IPPROTO_IPV6;
+    }
+
 
     port_min = atoi(str);
 
@@ -583,7 +778,11 @@ static void dst_port_handler(vector_t tokens)
         port_max = port_min;
     }
 
-    security_policy_rule_modify_dst_port(fw_parse_vrf, sec_policy_dir, rule_id, port_min, port_max);
+    stRuleCfg.stL4Info.stPortRange.stDRange.usSPort = port_min;
+    stRuleCfg.stL4Info.stPortRange.stDRange.usDPort = port_max;
+
+    stRuleCfg.uiKeyMask |= SECPOLICY_PACKET_MATCH_TYPE_DPORT;
+    (void)SecPolicy_Conf_MdyRulePara(&stRuleCfg, BOOL_FALSE);
 
     FREE_PTR(str);
 
@@ -597,6 +796,55 @@ static void src_port_handler(vector_t tokens)
     uint32_t port_max;
     char *p;
 
+    SECPOLICY_RULE_CFG_S stRuleCfg;
+
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw vrf %d %s %s %d src-port %s\n", __func__, 
+                                                        fw_parse_vrf,
+                                                        sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                        sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                        rule_id, 
+                                                        str);
+    }
+    else
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw tenant %s %s %s %d src-port %s\n", __func__, 
+                                                        szSecPolicyTenantID,
+                                                        sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                        sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                        rule_id, 
+                                                        str);
+    }
+    memset(&stRuleCfg, 0, sizeof(stRuleCfg));
+    stRuleCfg.enFwType = secpolicy_fw_type;
+    if (1 == sec_policy_dir) 
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_IN2OUT;
+    } 
+    else
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_OUT2IN;
+    }
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        stRuleCfg.uiVxlanID = fw_parse_vrf;
+    }
+    else if (secpolicy_fw_type == SECPOLICY_TYPE_EXTBODER)
+    {
+        memcpy(stRuleCfg.szTenantID, szSecPolicyTenantID, TENANT_ID_MAX+1);
+    }
+    stRuleCfg.uiRuleID  = rule_id;
+
+    if (1 == sec_policy_ip_proto)
+    {
+        stRuleCfg.uiIPType = IPPROTO_IP;
+    }
+    else
+    {
+        stRuleCfg.uiIPType = IPPROTO_IPV6;
+    }
+
     port_min = atoi(str);
 
     p = strchr(str, '-');
@@ -606,7 +854,148 @@ static void src_port_handler(vector_t tokens)
         port_max = port_min;
     }
 
-    security_policy_rule_modify_src_port(fw_parse_vrf, sec_policy_dir, rule_id, port_min, port_max);
+    stRuleCfg.stL4Info.stPortRange.stSRange.usSPort = port_min;
+    stRuleCfg.stL4Info.stPortRange.stSRange.usDPort = port_max;
+
+    stRuleCfg.uiKeyMask |= SECPOLICY_PACKET_MATCH_TYPE_SPORT;
+    (void)SecPolicy_Conf_MdyRulePara(&stRuleCfg, BOOL_FALSE);
+
+    FREE_PTR(str);
+
+    return;
+}
+
+static void app_handler(vector_t tokens)
+{
+    char *str = set_value(tokens);
+    char *p;
+    unsigned int ui;
+    unsigned char szApp[1024];
+
+    SECPOLICY_RULE_CFG_S stRuleCfg;
+
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw vrf %d %s %s %d app %s\n", __func__, 
+                                                        fw_parse_vrf,
+                                                        sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                        sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                        rule_id, 
+                                                        str);
+    }
+    else
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw tenant %s %s %s %d app %s\n", __func__, 
+                                                        szSecPolicyTenantID,
+                                                        sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                        sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                        rule_id, 
+                                                        str);
+    }
+    memset(&stRuleCfg, 0, sizeof(stRuleCfg));
+    stRuleCfg.enFwType = secpolicy_fw_type;
+    if (1 == sec_policy_dir) 
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_IN2OUT;
+    } 
+    else
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_OUT2IN;
+    }
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        stRuleCfg.uiVxlanID = fw_parse_vrf;
+    }
+    else if (secpolicy_fw_type == SECPOLICY_TYPE_EXTBODER)
+    {
+        memcpy(stRuleCfg.szTenantID, szSecPolicyTenantID, TENANT_ID_MAX+1);
+    }
+    stRuleCfg.uiRuleID  = rule_id;
+
+    if (1 == sec_policy_ip_proto)
+    {
+        stRuleCfg.uiIPType = IPPROTO_IP;
+    }
+    else
+    {
+        stRuleCfg.uiIPType = IPPROTO_IPV6;
+    }
+
+    memcpy(szApp, str,strlen(str));
+    ui = 0;
+    p = strtok(szApp, ",");
+    while(NULL != p && ui<SECPOLICY_APP_NUM_MAX)
+    {
+        stRuleCfg.szAppID[ui++] = atoi(p);
+        p = strtok(NULL, ",");
+    }
+
+    stRuleCfg.uiKeyMask |= SECPOLICY_PACKET_MATCH_TYPE_APP;
+
+    (void)SecPolicy_Conf_MdyRulePara(&stRuleCfg, BOOL_FALSE);
+
+    FREE_PTR(str);
+
+    return;
+}
+
+static void desc_handler(vector_t tokens)
+{
+    char *str = set_value(tokens);
+
+    SECPOLICY_RULE_CFG_S stRuleCfg;
+
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw vrf %d %s %s %d desc %s\n", __func__, 
+                                                        fw_parse_vrf,
+                                                        sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                        sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                        rule_id, 
+                                                        str);
+    }
+    else
+    {
+        RTE_LOG(INFO, CFG_FILE, "%s fw tenant %s %s %s %d desc %s\n", __func__, 
+                                                        szSecPolicyTenantID,
+                                                        sec_policy_ip_proto ? "ipv4":"ipv6", 
+                                                        sec_policy_dir ? "in2out-rule":"out2in-rule", 
+                                                        rule_id, 
+                                                        str);
+    }
+    memset(&stRuleCfg, 0, sizeof(stRuleCfg));
+    stRuleCfg.enFwType = secpolicy_fw_type;
+    if (1 == sec_policy_dir) 
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_IN2OUT;
+    } 
+    else
+    {
+        stRuleCfg.enFwDirect = SECPOLICY_DIRECTION_OUT2IN;
+    }
+    if (secpolicy_fw_type == SECPOLICY_TYPE_VPCBODER)
+    {
+        stRuleCfg.uiVxlanID = fw_parse_vrf;
+    }
+    else if (secpolicy_fw_type == SECPOLICY_TYPE_EXTBODER)
+    {
+        memcpy(stRuleCfg.szTenantID, szSecPolicyTenantID, TENANT_ID_MAX+1);
+    }
+    stRuleCfg.uiRuleID  = rule_id;
+
+    if (1 == sec_policy_ip_proto)
+    {
+        stRuleCfg.uiIPType = IPPROTO_IP;
+    }
+    else
+    {
+        stRuleCfg.uiIPType = IPPROTO_IPV6;
+    }
+
+    strlcpy(stRuleCfg.szDescInfo, str, (SECPOLICY_RULE_DECRIPTION_MAX+1));
+    stRuleCfg.uiKeyMask |= SECPOLICY_PACKET_MATCH_TYPE_DESC;
+
+    (void)SecPolicy_Conf_MdyRulePara(&stRuleCfg, BOOL_FALSE);
 
     FREE_PTR(str);
 
@@ -615,8 +1004,17 @@ static void src_port_handler(vector_t tokens)
 
 void install_security_policy_keywords(void)
 {
+    install_keyword("subnet", sec_policy_subnet, KW_TYPE_NORMAL);
+    install_sublevel();
+    install_keyword("ip", sec_policy_subnet_ip,   KW_TYPE_NORMAL);
+    install_keyword("ipv6", sec_policy_subnet_ipv6, KW_TYPE_NORMAL);
+    install_sublevel_end();
+
     install_keyword("security_policy_in", sec_policy_in_handler, KW_TYPE_NORMAL);
     install_sublevel();
+
+    install_keyword("ipv4", sec_policy_ipv4_handler, KW_TYPE_NORMAL);
+    install_sublevel();
     install_keyword("rule", rule_handler, KW_TYPE_NORMAL);
     install_sublevel();
     install_keyword("status",   status_handler, KW_TYPE_NORMAL);
@@ -628,11 +1026,35 @@ void install_security_policy_keywords(void)
     install_keyword("src_ip6",  src_ip6_handler, KW_TYPE_NORMAL);
     install_keyword("dst_port", dst_port_handler, KW_TYPE_NORMAL);
     install_keyword("src_port", src_port_handler, KW_TYPE_NORMAL);
+    install_keyword("app", app_handler, KW_TYPE_NORMAL);
+    install_keyword("desc", desc_handler, KW_TYPE_NORMAL);
+    install_sublevel_end();
+    install_sublevel_end(); 
+
+    install_keyword("ipv6", sec_policy_ipv6_handler, KW_TYPE_NORMAL);
+    install_sublevel();
+    install_keyword("rule", rule_handler, KW_TYPE_NORMAL);
+    install_sublevel();
+    install_keyword("status",   status_handler, KW_TYPE_NORMAL);
+    install_keyword("action",   action_handler, KW_TYPE_NORMAL);
+    install_keyword("service",  service_handler, KW_TYPE_NORMAL);
+    install_keyword("dst_ip6",  dst_ip6_handler, KW_TYPE_NORMAL);
+    install_keyword("src_ip6",  src_ip6_handler, KW_TYPE_NORMAL);
+    install_keyword("dst_port", dst_port_handler, KW_TYPE_NORMAL);
+    install_keyword("src_port", src_port_handler, KW_TYPE_NORMAL);
+    install_keyword("app", app_handler, KW_TYPE_NORMAL);
+    install_keyword("desc", desc_handler, KW_TYPE_NORMAL);
     install_sublevel_end();
     install_sublevel_end();
 
+    install_sublevel_end(); // security_policy_in
+
+    
     install_keyword("security_policy_out", sec_policy_out_handler, KW_TYPE_NORMAL);
     install_sublevel();
+
+    install_keyword("ipv4", sec_policy_ipv4_handler, KW_TYPE_NORMAL);
+    install_sublevel();
     install_keyword("rule", rule_handler, KW_TYPE_NORMAL);
     install_sublevel();
     install_keyword("status",   status_handler, KW_TYPE_NORMAL);
@@ -640,338 +1062,36 @@ void install_security_policy_keywords(void)
     install_keyword("service",  service_handler, KW_TYPE_NORMAL);
     install_keyword("dst_ip",   dst_ip_handler, KW_TYPE_NORMAL);
     install_keyword("src_ip",   src_ip_handler, KW_TYPE_NORMAL);
+    install_keyword("dst_port", dst_port_handler, KW_TYPE_NORMAL);
+    install_keyword("src_port", src_port_handler, KW_TYPE_NORMAL);
+    install_keyword("app", app_handler, KW_TYPE_NORMAL);
+    install_keyword("desc", desc_handler, KW_TYPE_NORMAL);
+    install_sublevel_end();
+    install_sublevel_end();
+
+    install_keyword("ipv6", sec_policy_ipv6_handler, KW_TYPE_NORMAL);
+    install_sublevel();
+    install_keyword("rule", rule_handler, KW_TYPE_NORMAL);
+    install_sublevel();
+    install_keyword("status",   status_handler, KW_TYPE_NORMAL);
+    install_keyword("action",   action_handler, KW_TYPE_NORMAL);
+    install_keyword("service",  service_handler, KW_TYPE_NORMAL);
     install_keyword("dst_ip6",  dst_ip6_handler, KW_TYPE_NORMAL);
     install_keyword("src_ip6",  src_ip6_handler, KW_TYPE_NORMAL);
     install_keyword("dst_port", dst_port_handler, KW_TYPE_NORMAL);
     install_keyword("src_port", src_port_handler, KW_TYPE_NORMAL);
+    install_keyword("app", app_handler, KW_TYPE_NORMAL);
+    install_keyword("desc", desc_handler, KW_TYPE_NORMAL);
     install_sublevel_end();
     install_sublevel_end();
 
+    install_sublevel_end(); // end security_policy_out
 
     return;
 }
 
 void security_policy_keyword_value_init(void)
 {
-    printf("%s\n", __func__);
+    //printf("%s\n", __func__);
+    return;
 }
-
-
-int security_policy_rule_create(uint32_t vrf, uint32_t inbound, uint32_t id)
-{
-    fw_vrf_conf_s *vrf_conf;
-    security_policy_conf_s *conf;
-    secpolicy_rule_s *rule;
-    struct list_head *head;
-    int ret;
-
-    vrf_conf = fw_conf_get_vrf(vrf);
-    if (!vrf_conf) {
-        return -1;
-    }
-
-    conf = &vrf_conf->secpolicy_conf;
-
-    if (inbound) {
-        head = &conf->head_in;
-    } else {
-        head = &conf->head_out;
-    }
-
-    security_policy_write_lock(vrf, inbound);
-
-    if (security_policy_rule_is_exist(vrf, inbound, id)) {
-        security_policy_write_unlock(vrf, inbound);
-        return 0;
-    }
-
-    ret = rte_mempool_get(conf->mp, (void **)&rule);
-    if (ret < 0) {
-        printf("security policy rule create failed.\n");
-        security_policy_write_unlock(vrf, inbound);
-        return -1;
-    }
-
-    memset(rule, 0, sizeof(secpolicy_rule_s));
-    rule->id = id;
-
-    list_add_tail(&rule->list, head);
-    security_policy_write_unlock(vrf, inbound);
-
-    return 0;
-}
-
-int security_policy_rule_delete(uint32_t vrf, uint32_t inbound, uint32_t id)
-{
-    fw_vrf_conf_s *vrf_conf;
-    security_policy_conf_s *conf;
-    secpolicy_rule_s *rule, *n;
-    struct list_head *head;
-
-    vrf_conf = fw_conf_get_vrf(vrf);
-    if (!vrf_conf) {
-        return -1;
-    }
-
-    conf = &vrf_conf->secpolicy_conf;
-
-    if (inbound) {
-        head = &conf->head_in;
-    } else {
-        head = &conf->head_out;
-    }
-
-    security_policy_write_lock(vrf, inbound);
-    list_for_each_entry_safe(rule, n, head, list) {
-        if (id == rule->id) {
-            list_del(&rule->list);
-            rte_mempool_put(conf->mp, rule);
-            break;
-        }
-    }
-    security_policy_write_unlock(vrf, inbound);
-
-    return 0;
-}
-
-int security_policy_rule_move(uint32_t vrf, uint32_t inbound, uint32_t id, uint32_t base_id, uint32_t action)
-{
-    fw_vrf_conf_s *vrf_conf;
-    security_policy_conf_s *conf;
-    secpolicy_rule_s *item = NULL;
-    secpolicy_rule_s *base = NULL;
-    secpolicy_rule_s *tmp, *n;
-    struct list_head *head;
-
-    vrf_conf = fw_conf_get_vrf(vrf);
-    if (!vrf_conf) {
-        return -1;
-    }
-
-    conf = &vrf_conf->secpolicy_conf;
-
-    if (inbound) {
-        head = &conf->head_in;
-    } else {
-        head = &conf->head_out;
-    }
-
-    security_policy_write_lock(vrf, inbound);
-
-    list_for_each_entry_safe(tmp, n, head, list) {
-        if (!item) {
-            if (id == tmp->id) {
-                item = tmp;
-            }
-        }
-
-        if (!base) {
-            if (base_id == tmp->id) {
-                base = tmp;
-            }
-        }
-
-        if (item && base) {
-            break;
-        }
-    }
-
-    if (item && base) {
-
-        list_del(&item->list);
-
-        if (action) {
-            /* before */
-            list_add_tail(&item->list, &base->list);
-        } else {
-            /* after */
-            list_add(&item->list, &base->list);
-        }
-    }
-    security_policy_write_unlock(vrf, inbound);
-
-    return 0;
-}
-
-int security_policy_rule_modify(uint32_t vrf, uint32_t inbound, secpolicy_rule_s *rule)
-{
-    fw_vrf_conf_s *vrf_conf;
-    security_policy_conf_s *conf;
-    secpolicy_rule_s *tmp, *n;
-    struct list_head *head;
-
-    vrf_conf = fw_conf_get_vrf(vrf);
-    if (!vrf_conf) {
-        return -1;
-    }
-
-    conf = &vrf_conf->secpolicy_conf;
-
-    if (!security_policy_rule_is_exist(vrf, inbound, rule->id)) {
-        return -1;
-    }
-
-    if (inbound) {
-        head = &conf->head_in;
-    } else {
-        head = &conf->head_out;
-    }
-
-    security_policy_write_lock(vrf, inbound);
-
-    list_for_each_entry_safe(tmp, n, head, list) {
-        if (0 == tmp->id) {
-            memcpy(tmp, rule, sizeof(secpolicy_rule_s));
-            break;
-        }
-    }
-
-    security_policy_write_unlock(vrf, inbound);
-
-    return 0;
-}
-
-int security_policy_rule_get(uint32_t vrf, uint32_t inbound, uint32_t id, secpolicy_rule_s *rule)
-{
-    fw_vrf_conf_s *vrf_conf;
-    security_policy_conf_s *conf;
-    secpolicy_rule_s *tmp, *n;
-    struct list_head *head;
-
-    vrf_conf = fw_conf_get_vrf(vrf);
-    if (!vrf_conf) {
-        return -1;
-    }
-
-    conf = &vrf_conf->secpolicy_conf;
-
-    if (inbound) {
-        head = &conf->head_in;
-    } else {
-        head = &conf->head_out;
-    }
-
-    if (list_empty(head)) {
-        return -1;
-    }
-
-    list_for_each_entry_safe(tmp, n, head, list) {
-        if (id == tmp->id) {
-            memcpy(rule, tmp, sizeof(secpolicy_rule_s));
-            return 0;
-        }
-    }
-
-    return -1;
-}
-
-int security_policy_rule_is_exist(uint32_t vrf, uint32_t inbound, uint32_t id)
-{
-    fw_vrf_conf_s *vrf_conf;
-    secpolicy_rule_s *rule, *n;
-    security_policy_conf_s *conf;
-    struct list_head *head;
-
-    vrf_conf = fw_conf_get_vrf(vrf);
-    if (!vrf_conf) {
-        return -1;
-    }
-
-    conf = &vrf_conf->secpolicy_conf;
-
-    if (inbound) {
-        head = &conf->head_in;
-    } else {
-        head = &conf->head_out;
-    }
-
-    if (list_empty(head)) {
-        return 0;
-    }
-
-    list_for_each_entry_safe(rule, n, head, list) {
-        if (id == rule->id) {
-            return 1;
-        }
-    }
-
-    return 0;
-}
-
-security_policy_conf_s *security_policy_conf_get(uint32_t vrf)
-{
-    fw_vrf_conf_s *vrf_conf;
-
-    vrf_conf = fw_conf_get_vrf(vrf);
-    if (!vrf_conf) {
-        return NULL;
-    }
-
-    return &vrf_conf->secpolicy_conf;
-}
-
-int security_policy_conf_init(uint32_t vrf)
-{
-    struct rte_mempool *mp;
-    fw_conf_s *fw_conf;
-    security_policy_conf_s *conf;
-
-    fw_conf = fw_conf_get();
-    if (!fw_conf || vrf >= FW_VRF_MAX_SIZE) {
-        return -1;
-    }
-
-    mp = rte_mempool_lookup(SEC_POLICY_RULE_MP_NAME);
-    if (!mp) {
-        mp = rte_mempool_create(SEC_POLICY_RULE_MP_NAME, SEC_POLICY_RULE_MP_SIZE,
-                sizeof(secpolicy_rule_s), 0, 0, NULL, NULL,
-                NULL, NULL, SOCKET_ID_ANY, 0);
-        if (!mp) {
-            printf("security policy rules create mempool failed.\n");
-            return -1;
-        }
-    }
-
-    /* init */
-    conf = &fw_conf->vrf_conf[vrf].secpolicy_conf;
-    INIT_LIST_HEAD(&conf->head_in);
-    rte_rwlock_init(&conf->rwlock_in);
-    INIT_LIST_HEAD(&conf->head_out);
-    rte_rwlock_init(&conf->rwlock_out);
-    conf->mp = mp;
-
-    return 0;
-}
-
-int security_policy_conf_term(uint32_t vrf)
-{
-    fw_vrf_conf_s *vrf_conf;
-    security_policy_conf_s *conf;
-    secpolicy_rule_s *pos;
-    secpolicy_rule_s *n;
-
-    vrf_conf = fw_conf_get_vrf(vrf);
-    if (!vrf_conf) {
-        return -1;
-    }
-
-    conf = &vrf_conf->secpolicy_conf;
-
-    /* free all rules */
-    list_for_each_entry_safe(pos, n, &conf->head_in, list) {
-        list_del(&pos->list);
-        rte_mempool_put(conf->mp, pos);
-    }
-
-    list_for_each_entry_safe(pos, n, &conf->head_out, list) {
-        list_del(&pos->list);
-        rte_mempool_put(conf->mp, pos);
-    }
-
-    if (conf->mp) {
-        rte_mempool_free(conf->mp);
-    }
-
-    return 0;
-}
-

@@ -88,18 +88,18 @@ int inet_init(void)
         return err;
     if ((err = route_init()) != 0)
         return err;
-    //if ((err = route6_init()) != 0)
-       // return err;
+    if ((err = route6_init()) != 0)
+        return err;
     if ((err = inet_hook_init()) != 0)
         return err;
     if ((err = ipv4_init()) != 0)
         return err;
-    //if ((err = ipv6_init()) != 0)
-        //return err;
+    if ((err = ipv6_init()) != 0)
+        return err;
     if ((err = icmp_init()) != 0)
         return err;
-    //if ((err = icmpv6_init()) != 0)
-        //return err;
+   if ((err = icmpv6_init()) != 0)
+        return err;
     if ((err = inet_addr_init()) != 0)
         return err;
 

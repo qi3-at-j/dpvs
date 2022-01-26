@@ -21,7 +21,8 @@
 
 typedef struct _aspf_policy_conf_ {
     uint64_t  detect;
-    uint32_t  tcp_syn_check;
+    uint32_t  bTcpSynCheck;
+    //BOOL_T    bTcpSynCheck;
 } __rte_cache_aligned aspf_policy_conf_s;
 
 
@@ -32,6 +33,7 @@ extern void aspf_policy_keyword_value_init(void);
 extern void install_aspf_policy_keywords(void);
 
 
+extern aspf_policy_conf_s * aspf_policy_get_by_vrf(uint32_t vrf);
 extern int aspf_policy_detect_modify(uint32_t vrf, uint32_t insert, uint64_t protocol);
 extern int aspf_policy_tcpsyn_check_modify(uint32_t vrf, uint32_t enable);
 

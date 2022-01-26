@@ -136,6 +136,7 @@ enum {
 	EDPVS_LOOP			= -28,		/* resource busy */
 	EDPVS_FULL   		= -29,		/* no such device */
 	EDPVS_FAILED		= -30,		/* operation failed */
+    EDPVS_NOENT         = -31,      /* no ent */
 
     /* positive code for non-error */
     EDPVS_KNICONTINUE   = 1,        /* KNI to continue */

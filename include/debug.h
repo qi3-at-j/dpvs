@@ -37,6 +37,11 @@ debug_trace_packet_mac(struct rte_mbuf *mbuf);
 extern void
 debug_trace_packet_ip(struct rte_mbuf *mbuf);
 extern void
+debug_trace_packet_any(void *start, uint32_t size);
+extern void
+debug_trace_mbuf_data(struct rte_mbuf *mbuf);
+
+extern void
 debug_trace(const char *fmt, ...);
 void
 debug_init(void);

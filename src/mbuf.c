@@ -107,7 +107,8 @@ void mbuf_copy_metadata(struct rte_mbuf *mi, struct rte_mbuf *m)
     mi->nb_segs = 1;
     mi->ol_flags = m->ol_flags & (~IND_ATTACHED_MBUF);
     mi->packet_type = m->packet_type;
-	mbuf_userdata_set(mi, NULL);
+    if (mbuf_userdata_dynfield_offset != -1)
+        mbuf_userdata_set(mi, NULL);
 
     __rte_mbuf_sanity_check(mi, 1);
     __rte_mbuf_sanity_check(m, 0);

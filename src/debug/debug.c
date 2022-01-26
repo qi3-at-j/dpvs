@@ -165,7 +165,7 @@ debug_print_hex(const char *output, uint32_t size)
 		nshorts--;
 	}
 	if (size & 1) {
-		if ((i % 8) == 0) {
+		if ((i++ % 8) == 0) {
             if (len) {
                 print_hex("%s\n", line);
             }
@@ -177,6 +177,9 @@ debug_print_hex(const char *output, uint32_t size)
         snprintf(line+len, sizeof(line)-len, " %02x", GET_U_1(output));
 		//print_hex(" %02x", GET_U_1(output));
 	}
+    if (i)
+        print_hex("%s\n", line);
+
 	print_hex("%s", "\n");
 }
 
@@ -192,6 +195,24 @@ debug_trace_packet_ip(struct rte_mbuf *mbuf)
 {
     struct rte_ipv4_hdr *ip = rte_pktmbuf_mtod_offset(mbuf, struct rte_ipv4_hdr *, 0);
     debug_print_hex((void *)ip, ntohs(ip->total_length));
+}
+
+void
+debug_trace_packet_any(void *start, uint32_t size)
+{
+    debug_print_hex(start, size);
+}
+
+void
+debug_trace_mbuf_data(struct rte_mbuf *mbuf)
+{
+    if (mbuf) {
+        char *data = rte_pktmbuf_mtod(mbuf, char *);
+        uint32_t data_len = mbuf->data_len;
+        if ((data_len > 0) && (data)) {
+            debug_print_hex(data, data_len);
+        }
+    }
 }
 
 void

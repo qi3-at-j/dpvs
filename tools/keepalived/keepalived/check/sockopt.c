@@ -8,6 +8,11 @@
 
 #define UNIX_DOMAIN "/var/run/dpvs_ctrl"
 
+
+ssize_t send_n(int fd, const void *vptr, size_t n, int flags);
+ssize_t read_n(int fd, void *vptr, size_t n);
+
+
 /* send "n" bytes to a descriptor */
 ssize_t send_n(int fd, const void *vptr, size_t n, int flags)
 {

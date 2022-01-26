@@ -16,9 +16,12 @@ enum ether_input_next_nodes {
 	//PKT_CLS_NEXT_IP4_LOOKUP,
 	//ETHER_INPUT_NEXT_L2_BOND,
 	ETHER_INPUT_NEXT_L2_VLAN,
-	ETHER_INPUT_NEXT_L2_ETHER_OUTPUT,
+	ETHER_INPUT_NEXT_L2_BRIDGE,
+	ETHER_INPUT_NEXT_L3_IPV4,
+	ETHER_INPUT_NEXT_L3_IPV6,
+	ETHER_INPUT_NEXT_ARP,
 	ETHER_INPUT_NEXT_MAX,
-};
+};	
 
 struct ether_input_node_ctx {
 	enum ether_input_next_nodes last_index;

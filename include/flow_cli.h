@@ -23,20 +23,23 @@
 #include "netif.h"
 #include "inet.h"
 #include "flow.h"
+#include "flow_msg.h"
 
-/* define flow synchronized command here */
-
+/* serveral macro defined for operation */
+enum {
+    FLOW_CMD_MSG_SUBTYPE_SUMMARY = 1,
+    FLOW_CMD_MSG_SUBTYPE_ALL,
+    FLOW_CMD_MSG_SUBTYPE_DETAIL,
+    FLOW_CMD_MSG_SUBTYPE_COUNTER,
+    FLOW_CMD_MSG_SUBTYPE_HASHTOP,
+    FLOW_CMD_MSG_SUBTYPE_HASH,
+    SESS_CMD_MSG_SUBTYPE_SHOW,
+    SESS_CMD_MSG_SUBTYPE_CLEAR,
+};
 
 #define number_2_mask(x) (((2<<(x))-1)<<(32-(x)))
 /*** used for get or clear connections ***/
 typedef struct connection_op_para_{
-
-	/* serveral macro defined for operation */
-#define CLR_GET_CONN_SUMMARY        0x0001
-#define CLR_GET_CONN_ALL            0x0002
-#define CLR_GET_CONN_DETAIL         0x0004
-#define CLR_GET_CONN_COUNTER        0x0008
-    uint16_t op;      /* identify the operation */
 	/* serveral macro defined for mask */
 #define CLR_GET_CONN_SRCIP          0x0001
 #define CLR_GET_CONN_SRCIP_MASK     0x0002
@@ -56,10 +59,12 @@ typedef struct connection_op_para_{
     uint32_t fcid;      /* flow connection id */
 	/* if address netmask is provided the address is the */
 	/* results applied by the netmask */
-	uint32_t src_ip;	/* source ip address */
-	uint32_t src_mask;	/* source ip netmask */
-	uint32_t dst_ip;	/* destination ip address */
-	uint32_t dst_mask;	/* destination ip netmask */
+	uint32_t src_ip;	   /* source ip address */
+	uint32_t src_ip3[3];   /* more values for ipv6 */
+	uint32_t src_mask;	   /* source ip netmask */
+	uint32_t dst_ip;	   /* destination ip address */
+	uint32_t dst_ip3[3];   /* more values for ipv6 */
+	uint32_t dst_mask;	   /* destination ip netmask */
 
 	/* if port low boundary is set the high boundary must be set */
     uint16_t srcport_low;	 /* source port low boundary */
@@ -77,18 +82,25 @@ typedef struct connection_op_para_{
 	uint32_t fcflag;
 	/* show flow connection with specific fw_policy */
 	uint32_t policy_id;
+	/* show flow connection with specific hash */
+	uint32_t hash;
 } connection_op_para_t;
 
 typedef struct {
-    volatile lcoreid_t cid;
-    uint32_t  number;
-    void      *cbt; /* cmd_blk_t */
-    connection_op_para_t *paras;
+    cmd_msg_hdr_t msg_hdr;
+    connection_op_para_t paras;
 } show_flow_ctx_t;
 
+typedef struct {
+    cmd_msg_hdr_t msg_hdr;
+} clear_flow_ctx_t;
+
 typedef void (* selected_connection_vector_t)(flow_connection_t *, void *);
-uint32_t 
-show_flow_connection(show_flow_ctx_t *ctx);
-extern show_flow_ctx_t show_flow_ctx;
+
+int 
+select_this_connection(flow_connection_t *fcp, 
+			           connection_op_para_t *paras);
+int
+flow_cli_init(void);
 
 #endif /* __TYFLOW_FLOW_CLI_H__ */

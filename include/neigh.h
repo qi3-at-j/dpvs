@@ -44,6 +44,7 @@
 #include "timer.h"
 #include "netif.h"
 #include "linux_ipv6.h"
+#include "neigh_sync.h"
 
 #define RTE_LOGTYPE_NEIGHBOUR RTE_LOGTYPE_USER2
 #define NEIGH_TAB_BITS 8
@@ -77,18 +78,6 @@
 #define NUD_PERMANENT	0x80
 #define NUD_NONE	0x00
 
-
-struct dpvs_ndmsg {
-	__u8		ndm_family;
-	__u8		ndm_pad1;
-	__u16		ndm_pad2;
-	__s32		ndm_ifindex;
-	__u16		ndm_state;
-	__u8		ndm_flags;
-	__u8		ndm_type;
-};
-
-
 /*
 enum {
 	NDA_UNSPEC,
@@ -117,11 +106,6 @@ struct neighbour_entry {
     uint8_t             flag;
 } __rte_cache_aligned;
 
-enum param_kind {
-    NEIGH_ENTRY,
-    NEIGH_PARAM
-};
-
 /*
  * no matter which kind of ip_addr, just use 32 bit to hash
  * since neighbour table is not a large table
@@ -132,6 +116,9 @@ static inline unsigned int neigh_hashkey(int af,
     return rte_be_to_cpu_32(inet_addr_fold(af, ip_addr)) \
                              & NEIGH_TAB_MASK;
 }
+
+struct dpvs_mempool *get_neigh_mempool_ipv6(void);
+
 
 void neigh_entry_state_trans(struct neighbour_entry *neighbour, int idx);
 
@@ -168,7 +155,18 @@ int neigh_resolve_input(struct rte_mbuf *mbuf, struct netif_port *port);
 
 void neigh_confirm(int af, union inet_addr *nexthop, struct netif_port *port);
 
-int neigh_sync_core(const void *param, bool add_del, enum param_kind kind);
+void neigh_fill_mac(struct neighbour_entry *neighbour,
+                           struct rte_mbuf *m,
+                           const struct in6_addr *target,
+                           struct netif_port *port);
+inline void neigh_show_entry(const char *func,
+                             struct neighbour_entry *neigh);
+struct raw_neigh* 
+neigh_ring_clone_entry(void *param, bool add);
+struct raw_neigh* 
+neigh_ring_clone_param(void *param, bool add);
+void 
+neigh_add_by_param(struct raw_neigh *param);
 
 static inline void ipv6_mac_mult(const struct in6_addr *mult_target,
                                  struct rte_ether_addr *mult_eth)

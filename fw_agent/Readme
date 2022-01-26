@@ -1,0 +1,8 @@
+1、需要安装python3 
+如果python3没有安装在/usr/bin下，需要在/usr/bin下创建个python3的符号链接
+ln -sf `which python3` /usr/bin/python3
+
+2、需要安装python3的依赖包
+pip3 install -r ./fw_agent/requirements.txt 
+
+3、 启动dpvs时 需要在flow这一级的目录下执行 例如./src/dpvs 或者 ./bin/dpvs

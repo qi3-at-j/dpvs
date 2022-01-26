@@ -21,6 +21,8 @@
 #include <stdbool.h>
 #include "vector.h"
 
+#define	PARAMETER_UNSET		UINT_MAX
+
 #define RTE_LOGTYPE_CFG_FILE RTE_LOGTYPE_USER1
 typedef enum {
     KW_TYPE_INIT = 1, /* keyword used in init stage only */

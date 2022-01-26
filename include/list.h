@@ -25,10 +25,11 @@
 #include <linux/const.h>
 #include <linux/kernel.h>
 #include <rte_atomic.h>
+#include "general_rcu.h"
+typedef struct list_head {
+	struct list_head *next, *prev;
+} list_head_t;
 
-struct list_head {
-        struct list_head *next, *prev;
-};
 
 struct hlist_head {
         struct hlist_node *first;
@@ -203,6 +204,12 @@ static inline void list_del_init(struct list_head *entry)
     INIT_LIST_HEAD(entry);
 }
 
+static inline void list_del_rcu_init(struct list_head *entry)
+{
+    list_del_rcu(entry);
+    INIT_LIST_HEAD(entry);
+}
+
 /**
  * list_move - delete from one list and add as another's head
  * @list: the entry to move
@@ -279,6 +286,26 @@ static inline void list_add_tail_rcu(struct list_head *new,
 {
 	__list_add_rcu(new, head->prev, head);
 }
+                    
+#define list_entry_rcu(ptr, type, member) \
+	({typeof (*ptr) __rcu *__ptr = (typeof (*ptr) __rcu __force *)ptr; \
+	 container_of((typeof(ptr))rcu_dereference_raw(__ptr), type, member); \
+	})
+
+/**
+ * list_for_each_entry_rcu	-	iterate over rcu list of given type
+ * @pos:	the type * to use as a loop cursor.
+ * @head:	the head for your list.
+ * @member:	the name of the list_struct within the struct.
+ *
+ * This list-traversal primitive may safely run concurrently with
+ * the _rcu list-mutation primitives such as list_add_rcu()
+ * as long as the traversal is guarded by rcu_read_lock().
+ */
+#define list_for_each_entry_rcu(pos, head, member) \
+	for (pos = list_entry_rcu((head)->next, typeof(*pos), member); \
+		&pos->member != (head); \
+		pos = list_entry_rcu(pos->member.next, typeof(*pos), member))
 
 /**
  * list_empty_careful - tests whether a list is empty and not being modified

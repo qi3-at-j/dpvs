@@ -28,12 +28,14 @@
 #include <assert.h>
 #include <getopt.h>
 #include <signal.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+
 #include "pidfile.h"
 #include "dpdk.h"
 #include "conf/common.h"
 #include "netif.h"
 #include "vlan.h"
-#include "br_private.h"
 #include "inet.h"
 #include "timer.h"
 #include "ctrl.h"
@@ -52,6 +54,20 @@
 #include "general_rcu.h"
 #include "fw_conf/fw_cli.h"
 #include "fw_conf/fw_conf.h"
+#include "l2.h"
+#include "fw_conf/fw_cli.h"
+#include "fw_conf/fw_conf.h"
+#include "setproctitle.h"
+#include "start_process.h"
+#include "session_public.h"
+#include "fw-base/session_mbuf.h"
+#include "fw-base/dpi.h"
+#include "flow_l3_cfg_init_priv.h"
+#include "lib/scheduler.h"
+#include "vrrp/vrrp.h"
+#include "vrrp/vrrp_daemon.h"
+#include "vrrp/vrrp_data.h"
+#include "vrrp/vrrp_ring.h"
 
 #define DPVS    "dpvs"
 #define RTE_LOGTYPE_DPVS RTE_LOGTYPE_USER1
@@ -81,6 +97,8 @@ ifstate_term(void);
                     fw_cli_init,         fw_cli_term),          \
         DPVS_MODULE(MODULE_FWCONF,      "fw conf init",         \
                     fw_conf_init,        fw_conf_term),         \
+        DPVS_MODULE(MODULE_PROCESS,     "fw process",           \
+                    start_process_cfg_irrelevant, NULL),        \
         DPVS_MODULE(MODULE_CFG,         "config file",          \
                     cfgfile_init,        cfgfile_term),         \
         DPVS_MODULE(MODULE_PDUMP,        "pdump",               \
@@ -105,7 +123,11 @@ ifstate_term(void);
                     sa_pool_init,        sa_pool_term),         \
         DPVS_MODULE(MODULE_IP_TUNNEL,   "tunnel",               \
                     ip_tunnel_init,      ip_tunnel_term),       \
-        DPVS_MODULE(MODULE_VS,          "ipvs",                 \
+		DPVS_MODULE(MODULE_BRIDGE,        "brctl",              \
+            		br_init,              NULL),                \
+        DPVS_MODULE(MODULE_L2,            "l2",                 \
+            		l2_init,               NULL),               \
+		DPVS_MODULE(MODULE_VS,          "ipvs",                 \
                     dp_vs_init,          dp_vs_term),           \
         DPVS_MODULE(MODULE_NETIF_CTRL,  "netif ctrl",           \
                     netif_ctrl_init,     netif_ctrl_term),      \
@@ -113,16 +135,17 @@ ifstate_term(void);
                     RCU_init,           NULL),                  \
         DPVS_MODULE(MODULE_IFTRAF,      "iftraf",               \
                     iftraf_init,         iftraf_term),          \
-        DPVS_MODULE(MODULE_IFSTAT,      "ifstate",               \
-                    ifstate_init,         ifstate_term),          \
-        DPVS_MODULE(MODULE_LAST,        "ifstate",               \
-                    eal_mem_init,        eal_mem_term)          \
+        DPVS_MODULE(MODULE_IFSTAT,      "ifstate",              \
+                    ifstate_init,         ifstate_term),        \
+        DPVS_MODULE(MODULE_eal_mem,        "ifstate",           \
+                    eal_mem_init,        eal_mem_term),         \
+        DPVS_MODULE(MODULE_FLOW_L3,     "flow l3 init",         \
+                    flow_l3_init,       NULL),                  \
+        DPVS_MODULE(MODULE_LAST,        "flow config file",     \
+                    flow_cfgfile_init,  NULL)                   \
     }
 
-/*    
-后期需要加上这个特性
-DPVS_MODULE(MODULE_BRIDGE,        "brctl",              \
-            br_init,              NULL),                \*/
+                          
 #define DPVS_MODULE(a, b, c, d)  a
 enum dpvs_modules DPVS_MODULES;
 #undef DPVS_MODULE
@@ -262,18 +285,6 @@ static int parse_app_args(int argc, char **argv)
 
     return ret;
 }
-static void
-signal_handler(int signum)
-{
-	if (signum == SIGINT || signum == SIGTERM) {
-		printf("\n\nSignal %d received, preparing to exit...\n",
-		       signum);
-		force_quit = true;
-	}
-
-	//rte_delay_ms(1E3);
-	dpvs_final_exit();
-}
 
 static struct rte_graph_cluster_stats *graph_stats = NULL;
 
@@ -282,18 +293,26 @@ print_stats(void *arg)
 {
 	const char topLeft[] = {27, '[', '1', ';', '1', 'H', '\0'};
 	const char clr[] = {27, '[', '2', 'J', '\0'};
-
+	int err =  0;
+	
 	/* Clear screen and move to top left */
 	printf("%s%s", clr, topLeft);
 	rte_graph_cluster_stats_get(graph_stats, 0);
 	rte_delay_ms(1E3);
+
+	/*cnt++;
+	if(cnt == 3){
+		err = dpvs_timer_cancel(&graph_print_timer, true);
+		cnt = 0;
+	}
 	printf("finish print status\n");
-	return 0;
+	*/
+	return err;
 }
 
 
 void init_graph_print(void){
-	struct timeval tv;
+	//struct timeval tv;
 	struct rte_graph_cluster_stats_param s_param;
 	const char *pattern = "worker_*";
 
@@ -307,23 +326,103 @@ void init_graph_print(void){
 	graph_stats = rte_graph_cluster_stats_create(&s_param);
 	if (graph_stats == NULL)
 		rte_exit(EXIT_FAILURE, "Unable to create graph_stats object\n");
-	//æ‰“å°å›¾çŠ¶æ€ç»“æž„
-	printf("final ---------------------------");
 	rte_graph_stat_printf(graph_stats);
+	//tv.tv_sec = 1; /* one second */
+    //tv.tv_usec = 0;
+
+	//rte_graph_cluster_stats_destroy(graph_stats);
+	//dpvs_timer_sched_period(&graph_print_timer, &tv, print_stats, NULL, true);
+	
+}
+
+static int
+show_graph_cli(cmd_blk_t *cbt)
+{
+	struct timeval tv;
+	static int off = 0;
 	tv.tv_sec = 1; /* one second */
     tv.tv_usec = 0;
-
-	//rte_graph_cluster_stats_destroy(graph_stats);//æ³¨æ„è¿›ç¨‹ç»ˆç»“çš„æ—¶å€™è¦é‡Šæ”¾å†…å­˜ã€‚
-	dpvs_timer_sched_period(&graph_print_timer, &tv, print_stats, NULL, true);
+	int err = 0;
+	if(off == 0){
+		dpvs_timer_sched_period(&graph_print_timer, &tv, print_stats, NULL, true);
+		off = 1;
+	}else{
+		err = dpvs_timer_cancel(&graph_print_timer, true);
+		off = 0;
+	}
+	//return print_stats(NULL);
+    return err;
 }
-void dpvs_final_exit(void){
+
+
+EOL_NODE_NEED_MAIN_EXEC(graph_status_eol, show_graph_cli);
+KW_NODE(graph_status, graph_status_eol, none, "graph", "the running status of graph");
+
+static void
+graph_stauts_print_cli_init(void)
+{
+    add_get_cmd(&cnode(graph_status));
+}
+
+static void dpvs_final_exit(void)
+{
 
     dpvs_state_set(DPVS_STATE_FINISH);
+
+    /* stop child process */
+    terminate_tasks();
+
     modules_term();
 
     pidfile_rm(DPVS_PIDFILE);
 
-    exit(0);
+    return;
+}
+
+static
+void sig_callback(int sig)
+{
+    pid_t pid;
+    int err;
+
+    switch(sig) {
+    case SIGCHLD:
+        pid = waitpid(-1, NULL, WNOHANG);
+        set_task_exit(pid);
+        break;
+    case SIGINT:
+    case SIGTERM:
+        printf("Got signal %d pid:%d.\n", sig, getpid());
+        err = dpvs_timer_cancel(&graph_print_timer, true);
+        printf("timer cancel err = %u.\n", err);
+        dpvs_terminate = 1;
+        break;
+    default:
+        printf("Unkown signal type %d.\n", sig);
+        break;
+    }
+
+    return;
+}
+
+static
+int signal_register(int sig_no)
+{
+    int ret;
+    struct sigaction sig;
+
+    memset(&sig, 0, sizeof(struct sigaction));
+    sig.sa_handler = sig_callback;
+    sigemptyset(&sig.sa_mask);
+    sig.sa_flags = 0;
+
+    ret = sigaction(sig_no, &sig, NULL);
+    if (ret < 0) {
+        printf("sigaction ret:%d errno:%d\n", ret, errno);
+        return -1;
+    }
+
+    return 0;
 }
 
 void
@@ -349,19 +448,23 @@ int main(int argc, char *argv[])
         fprintf(stderr, "fail to parse application options\n");
         exit(EXIT_FAILURE);
     }
+
+    save_argv(argv);
+
     argc -= err, argv += err;
 
-	//æ‰‹åŠ¨åœæ­¢
-	force_quit = false;
-	//signal(SIGINT, signal_handler);
-	//signal(SIGTERM, signal_handler);
-
+	//æ‰‹åŠ¨åœæ�??	//force_quit = false;
+    signal_register(SIGCHLD);
+    signal_register(SIGINT);
+    signal_register(SIGTERM);
 	
     /* check if dpvs is running and remove zombie pidfile */
     if (dpvs_running(DPVS_PIDFILE)) {
         fprintf(stderr, "dpvs is already running\n");
         exit(EXIT_FAILURE);
     }
+
+    init_task_pcb();
 
     dpvs_state_set(DPVS_STATE_INIT);
 
@@ -385,15 +488,30 @@ int main(int argc, char *argv[])
 
     RTE_LOG(INFO, DPVS, "dpvs version: %s, build on %s\n", DPVS_VERSION, DPVS_BUILD_DATE);
 
-	//此处适配dpdk20 放弃的dpdk18 mbuf中的userdata字段。
+    init_vrrp_data();
+    if (vrrp_ring_init() < 0)
+    {
+        RTE_LOG(ERR, DPVS, "%s: vrrp ring init failed.\n", __func__);
+    }
+
+    setproctitle_init();
+    DPI_Init();
+
+	/*adapter 18*/
 	err = dpdk_priv_userdata_register();
+	err |= dpdk_priv_dev_register();
 	if(err != EDPVS_OK){
 		 RTE_LOG(ERR, DPVS, "register mbuf dyn failed = %d\n", err);
             goto end;
 	}
     rte_timer_subsystem_init();
 
+    //start_process_cfg_irrelevant();
+
     modules_init();
+
+    cmd_init();
+	graph_stauts_print_cli_init();
 
     /* config and start all available dpdk ports */
     nports = dpvs_rte_eth_dev_count();
@@ -406,23 +524,22 @@ int main(int argc, char *argv[])
 
         err = netif_port_start(dev);
 		printf("netif_port_start .........done ,err = %d\n", err);
-        if (err != EDPVS_OK)
-            RTE_LOG(WARNING, DPVS, "Start %s failed, skipping ...\n",
-                    dev->name);
-		else{
-			//³õÊ¼»¯nodeÊÕ·¢½ÚµãËùÐèÒªµÄdevÅäÖÃÊý¾Ý
+        if(dev->type == PORT_TYPE_BOND_MASTER){
+            //temp : let's bond's start to be succeed
+            err = EDPVS_OK;
+        }
+        if (err != EDPVS_OK){
+            RTE_LOG(WARNING, DPVS, "Start %s failed, skipping ...\n", dev->name);
+        }else{
 			init_rte_node_ethdev_config(pid);
 		}
 	}
 
-	/*³õÊ¼»¯ÐèÒª´´½¨µÄÍ¼½ÚµãÊýÁ¿£¬ÒÀ¾ÝÊÇÒÀ´ÎÅÐ¶ÏËùÓÐ×ª·¢ºËµÄ½ÓÊÕ¶ÓÁÐÊýÁ¿£¬
-	Èç¹û´æÔÚ½ÓÊÕ¶ÓÁÐµÄÅäÖÃ£¬ÔòÎÒÃÇ±ØÐë´´½¨Í¼½Úµã*/
 	netif_init_graph_need_to_create();
 
-	/*·¢ËÍ½ÓÊÕ½Úµã³õÊ¼»¯*/
 	err = rte_node_eth_config(get_node_ethdev_config(), get_node_ethdev_config_nb(), netif_get_graph_need_to_create());
 	if (err < 0){
-		RTE_LOG(ERR, DPVS, "Init rx tx node failed£¡ err = %d\n", err);
+		RTE_LOG(ERR, DPVS, "Init rx tx node failed err = %d\n", err);
 		goto end;
 	}
 	
@@ -433,17 +550,26 @@ int main(int argc, char *argv[])
 
 	err = init_graph_for_per_slave_core();
 	if (err < 0){
-			RTE_LOG(ERR, DPVS, "Init graph_for_per_slave_core failed£¡ err = %d\n", err);
-			goto end;
+		RTE_LOG(ERR, DPVS, "Init graph_for_per_slave_core failed err = %d\n", err);
+		goto end;
 	}
 
-	/* æ˜¾ç¤ºå›¾è°ƒåº¦æƒ…å†µAccumulate and print stats on main until exit */
-	//if (rte_graph_has_stats_feature())
-	//init_graph_print();
+	if (rte_graph_has_stats_feature())
+		init_graph_print();
 
     log_slave_init();
 
-    flow_init();
+    start_process();
+
+    err = flow_init();
+    if (err < 0) {
+        goto end;
+    }
+
+    SESSION_Init(NULL);
+    SESSION_KMDC_Init();
+    SESSION_Run(NULL);
+	ASPF_Init();
 
     /* start slave worker threads */
     dpvs_lcore_start(0);
@@ -454,18 +580,22 @@ int main(int argc, char *argv[])
 
     dpvs_state_set(DPVS_STATE_NORMAL);
 
+    sleep(1);
 	err = RCU_start();
 	if (err < 0){
 		RTE_LOG(ERR, DPVS, "RCU start failed. err = %d\n", err);
 		goto end;
 	}
 	
-    cmd_init();
+    //cmd_init();
+	//graph_stauts_print_cli_init();
     ctflow_console_job_start();
+    tyflow_vty_job_start();
+    vrrp_job_start();
     /* start control plane thread loop */
     dpvs_lcore_start(1);
 end:
-
 	dpvs_final_exit();
 
+    return 0;
 }

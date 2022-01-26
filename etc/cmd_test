@@ -1,0 +1,112 @@
+// vrf
+curl http://127.0.0.1:5000/vfw/api/v1/system/vrf -H "content-type:application/json" -X POST -d '{"uid":"2"}'
+curl http://127.0.0.1:5000/vfw/api/v1/system/vrf -H "content-type:application/json" -X DELETE -d '{"uid":"2"}'
+
+// session
+curl http://127.0.0.1:5000/vfw/api/v1/system/session
+curl http://127.0.0.1:5000/vfw/api/v1/system/session -H "content-type:application/json" -X PATCH -d '{"ftp_data":"5"}'
+curl http://127.0.0.1:5000/vfw/api/v1/system/session -H "content-type:application/json" -X PATCH -d '{"session_statistics":"enable"}'
+
+// aspf
+curl http://127.0.0.1:5000/vfw/api/v1/system/aspfpolicy -H "content-type:application/json" -X PATCH -d '{"uid":"2","action":"insert","tcp_syn_check":"disable", "detect":"http sip"}'
+curl http://127.0.0.1:5000/vfw/api/v1/system/aspfpolicy -H "content-type:application/json" -X PATCH -d '{"uid":"2","action":"remove","tcp_syn_check":"disable", "detect":"http sip"}'
+
+// ips
+curl http://127.0.0.1:5000/vfw/api/v1/system/ipspolicy -H "content-type:application/json" -X PATCH -d '{"uid":"2", "rule_id":"3425", "action":"pass"}'
+
+// security policy
+method:
+POST -- create rule
+DELETE -- delete rule
+PATCH -- merge rule config
+PUT -- replay rule config
+GET -- get rule config
+
+-- inbound
+curl http://127.0.0.1:5000/vfw/api/v1/system/secpolicyin -H "content-type:application/json" -X PUT -d '{"uid":"1", "rule_id":"4", "status":"enable", "src_port":"1", "dst_port":"3-23", "dst_ip":"1.1.1.1/32", "src_ip":"3.2.3.0/24", "desc":"xx"}'
+-- outbound
+curl http://127.0.0.1:5000/vfw/api/v1/system/secpolicyout -H "content-type:application/json" -X POST -d '{"uid":"1", "rule_id":"4", "src_ip":"2.2.2.2", "dst_ip":"1.1.1.1/24", "src_port":"1-2", "dst_port":"1-65535"}'
+
+
+-- route cfg
+http://127.0.0.1:5000/vfw/api/v1/system/route
+method:
+GET
+POST
+DELETE
+
+args:
+"uid"
+"proto"
+"dip"
+"netmask"
+"prefix_len"
+"gw"
+"port"
+"type"
+
+
+-- vxlan cfg
+http://127.0.0.1:5000/vfw/api/v1/system/vxlan
+method:
+GET
+POST
+DELETE
+
+args:
+"vni"
+"proto:
+"sip"
+"rip"
+
+
+-- vrf-bind cfg
+http://127.0.0.1:5000/vfw/api/v1/system/vrf-bind
+GET
+PATCH
+DELETE
+
+args:
+"uid"
+"vni"
+"ip"
+"ip6"
+"port"
+
+-- arp cfg
+http://127.0.0.1:5000/vfw/api/v1/system/arp
+GET
+POST
+DELETE
+
+args:
+"uid"
+"proto"
+"ip"
+"mac"
+
+
+-- vlan-port cfg
+http://127.0.0.1:5000/vfw/api/v1/system/vlan-port
+method:
+GET
+POST
+DELETE
+
+args:
+"portname"
+"link"
+"id"
+
+-- port ip cfg
+http://127.0.0.1:5000/vfw/api/v1/system/portip
+GET
+PATCH
+DELETE
+
+args:
+"portname"
+"ip"
+"ip6"
+
+

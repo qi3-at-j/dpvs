@@ -33,33 +33,6 @@
 #include "ndisc.h"
 #include "icmp6.h"
 
-#define NDISC_OPT_SPACE(len) (((len)+2+7)&~7)
-
-struct nd_msg {
-    struct icmp6_hdr    icmph;
-    struct in6_addr    target;
-    uint8_t            opt[0];
-};
-
-/*
- * netinet/icmp6.h define ND_OPT by '#define', ND_OPT_MAX is not defined.
- * kernel define ND_OPT_ARRAY_MAX by enum, just define 256 here.
- */
-#define __ND_OPT_ARRAY_MAX 256
-
-struct ndisc_options {
-    struct nd_opt_hdr *nd_opt_array[__ND_OPT_ARRAY_MAX];
-    struct nd_opt_hdr *nd_useropts;
-    struct nd_opt_hdr *nd_useropts_end;
-};
-
-#define nd_opts_src_lladdr      nd_opt_array[ND_OPT_SOURCE_LINKADDR]
-#define nd_opts_tgt_lladdr      nd_opt_array[ND_OPT_TARGET_LINKADDR]
-#define nd_opts_pi              nd_opt_array[ND_OPT_PREFIX_INFORMATION]
-#define nd_opts_pi_end          nd_opt_array[0]  //__ND_OPT_PREFIX_INFO_END
-#define nd_opts_rh              nd_opt_array[ND_OPT_REDIRECTED_HEADER]
-#define nd_opts_mtu             nd_opt_array[ND_OPT_MTU]
-
 #ifdef CONFIG_NDISC_DEBUG
 static inline void ndisc_show_addr(const char *func,
                                    const struct in6_addr *saddr,
@@ -101,20 +74,6 @@ static inline void ndisc_show_target(const char *func,
 }
 #endif
 
-/* ipv6 neighbour */
-static inline uint8_t *ndisc_opt_addr_data(struct nd_opt_hdr *p,
-                                           struct netif_port *dev)
-{
-    uint8_t *lladdr = (uint8_t *)(p + 1);
-    int lladdrlen = p->nd_opt_len << 3;
-
-    /* support rte_ether_addr only */
-    if (lladdrlen != NDISC_OPT_SPACE(sizeof(dev->addr)))
-        return NULL;
-
-    return lladdr;
-}
-
 static uint8_t *ndisc_fill_addr_option(struct rte_mbuf *mbuf,
                                        uint8_t *opt, int type,
                                        void *data, int data_len)
@@ -137,7 +96,7 @@ static uint8_t *ndisc_fill_addr_option(struct rte_mbuf *mbuf,
     return opt + space;
 }
 
-static struct ndisc_options *ndisc_parse_options(uint8_t *opt, int opt_len,
+struct ndisc_options *ndisc_parse_options(uint8_t *opt, int opt_len,
                                                 struct ndisc_options *ndopts)
 {
     struct nd_opt_hdr *nd_opt = (struct nd_opt_hdr *)opt;
@@ -188,7 +147,7 @@ static struct ndisc_options *ndisc_parse_options(uint8_t *opt, int opt_len,
     return ndopts;
 }
 
-static struct rte_mbuf *ndisc_build_mbuf(struct netif_port *dev,
+struct rte_mbuf *ndisc_build_mbuf(struct netif_port *dev,
                                          const struct in6_addr *daddr,
                                          const struct in6_addr *saddr,
                                          const struct icmp6_hdr *icmp6h,
@@ -226,6 +185,63 @@ static struct rte_mbuf *ndisc_build_mbuf(struct netif_port *dev,
 
     if (llinfo)
         ndisc_fill_addr_option(mbuf, opt, llinfo, &dev->addr, sizeof(dev->addr));
+
+    /* checksum */
+    iph.payload_len = htons(len);
+    iph.proto       = IPPROTO_ICMPV6;
+    rte_memcpy(&iph.src_addr, saddr, sizeof(*saddr));
+    rte_memcpy(&iph.dst_addr, daddr, sizeof(*daddr));
+    icmp6hdr->icmp6_cksum = 0;
+    icmp6hdr->icmp6_cksum = rte_ipv6_udptcp_cksum(&iph, icmp6hdr);
+
+    return mbuf;
+}
+
+struct rte_mbuf *ndisc_build_mbuf_graph(struct netif_port *dev,
+                                         const struct in6_addr *daddr,
+                                         const struct in6_addr *saddr,
+                                         const struct icmp6_hdr *icmp6h,
+                                         const struct in6_addr *target,
+                                         int llinfo,
+                                         struct vrrp_entry *vrrp_node)
+{
+    struct rte_mbuf *mbuf;
+    struct icmp6_hdr *icmp6hdr;
+    struct rte_ipv6_hdr iph;
+    int len;
+    uint8_t *opt;
+
+    len = sizeof(*icmp6h) + (target ? sizeof(*target) : 0);
+
+    if (llinfo)
+        len += NDISC_OPT_SPACE(sizeof(dev->addr));
+
+    mbuf = rte_pktmbuf_alloc(dev->mbuf_pool);
+    if (!mbuf) {
+        RTE_LOG(ERR, NEIGHBOUR, "mbuf_pool alloc failed\n");
+        return NULL;
+    }
+    mbuf_userdata_set(mbuf, NULL);
+
+    icmp6hdr = (struct icmp6_hdr *)rte_pktmbuf_append(mbuf, sizeof(*icmp6h));
+    rte_memcpy(icmp6hdr, icmp6h, sizeof(*icmp6h));
+
+    opt = rte_pktmbuf_mtod_offset(mbuf, uint8_t *, sizeof(*icmp6h));
+
+    if (target) {
+        opt = (uint8_t *)rte_pktmbuf_append(mbuf, sizeof(*target));
+        rte_memcpy((struct in6_addr *)opt, target, sizeof(*target));
+        opt += sizeof(*target);
+    }
+
+    if (llinfo) {
+        if (vrrp_node)
+            ndisc_fill_addr_option(mbuf, opt,
+                llinfo, vrrp_node->mac, sizeof(dev->addr));
+        else          
+            ndisc_fill_addr_option(mbuf, opt,
+                llinfo, &dev->addr, sizeof(dev->addr));
+    }
 
     /* checksum */
     iph.payload_len = htons(len);
@@ -335,12 +351,11 @@ void ndisc_send_dad(struct netif_port *dev,
     ndisc_send_ns(dev, solicit, &mcaddr, &in6addr_any);
 }
 
-void ndisc_solicit(struct neighbour_entry *neigh,
+void ndisc_solicit(struct netif_port *dev,
+                   struct in6_addr *target,
                    const struct in6_addr *saddr)
 {
     struct in6_addr mcaddr;
-    struct netif_port *dev = neigh->port;
-    struct in6_addr *target = &neigh->ip_addr.in6;
 
     addrconf_addr_solict_mult(target, &mcaddr);
     ndisc_send_ns(dev, target, &mcaddr, saddr);

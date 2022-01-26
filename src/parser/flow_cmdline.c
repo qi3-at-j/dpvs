@@ -40,6 +40,12 @@ cmdline_valid_buffer(struct rdline *rdl, const char *buf,
 		}
 		snprintf(&message[space], RDLINE_BUF_SIZE-space, "%s", errstr);
 		tyflow_cmdline_printf(cl, "%s", message);
+#ifdef VTY_SYN
+        if (cl->vty) {
+            close(cl->s_out);
+            cl->s_out = -1;
+        }
+#endif
 	}
 
 #if 0
@@ -103,6 +109,14 @@ tyflow_cmdline_set_prompt(struct cmdline *cl, const char *prompt)
 	if (!cl || !prompt)
 		return;
 	snprintf(cl->prompt, sizeof(cl->prompt), "%s", prompt);
+}
+
+void
+tyflow_cmdline_show_prompt(struct cmdline *cl)
+{
+	if (!cl)
+		return;
+    tyflow_cmdline_printf(cl, "%s", cl->prompt);
 }
 
 struct cmdline *

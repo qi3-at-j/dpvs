@@ -15,6 +15,9 @@
 #include <termios.h>
 
 #include "scheduler.h"
+#include "start_process.h"
+#include "proto_relation.h"
+#include "app_rbt.h"
 #include "parser/flow_cmdline_parse.h"
 #include "parser/flow_cmdline_rdline.h"
 #include "parser/flow_cmdline_socket.h"
@@ -203,11 +206,13 @@ cleanup:
     close(clt_fd);
 }
 
+/*
 static struct dpvs_lcore_job tyflow_cmd_batch_job = {
     .name = "cmd_batch_job",
     .type = LCORE_JOB_LOOP,
     .func = tyflow_cmd_batch_job_func,
 };
+*/
 
 static int
 cmd_batch_sock_init(void)
@@ -247,18 +252,46 @@ cmd_batch_sock_init(void)
         return -1;
     }
 
+    /*
     if ((dpvs_lcore_job_register(&tyflow_cmd_batch_job, LCORE_ROLE_MASTER)) != EDPVS_OK) {
         RTE_LOG(ERR, CMDBATCH, "%s: Fail to register cmd_batch_job into master\n", __func__);
         close(srv_fd);
         unlink(TYFLOW_UD_CMD_BATCH);
         return -1;
     }
+    */
+
     return 0;
 }
 
 void
 cmd_batch_init(void)
 {
-    cmd_batch_sock_init();
+    //cmd_batch_sock_init();
     add_debug_cmd(&cnode(debug_cmdbatch));
 }
+
+void *fw_cfgd_work(void *data)
+{
+    cmd_batch_sock_init();
+
+    App_Rbt_Process();
+
+    proto_relation_process();
+
+    //printf("l5:%d l7:%d\n", proto_relation_get(12981), 12981);
+    //printf("l5:%d l7:%d\n", proto_relation_get(354), 354);
+    //printf("l5:%d l7:%d\n", proto_relation_get(369), 369);
+    //printf("l5:%d l7:%d\n", proto_relation_get(27), 27);
+
+    /* init */
+    //cmd_init();
+
+    while (!dpvs_terminate) {
+        tyflow_cmd_batch_job_func(NULL);
+        sleep(1);
+    }
+
+    return NULL;
+}
+

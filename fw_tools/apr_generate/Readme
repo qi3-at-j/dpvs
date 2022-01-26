@@ -1,0 +1,17 @@
+
+Step 1
+detect_reduce
+-- reduce apr detect info
+
+Step 2
+to_desc
+-- get apr descption info
+
+Step 3
+detect_to_dict
+-- transform apr info to dict by detect(Step 1) and desc info(Step 2)
+
+Step 4
+to_suricata
+-- tranform apr info to suricata format by apr dict(Step 3)
+

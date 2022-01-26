@@ -143,6 +143,17 @@ static void ip6_conf_disable(vector_t tokens)
 
     FREE_PTR(str);
 }
+struct inet6_protocol *get_inet6_prots_by_hdr(uint8_t nexthdr){
+    return inet6_prots[nexthdr];
+}
+
+void rte_rwlock_read_lock_inet6_prot(void){
+    rte_rwlock_read_lock(&inet6_prot_lock);
+}
+
+void rte_rwlock_read_unlock_inet6_prot(void){
+    rte_rwlock_read_unlock(&inet6_prot_lock);
+}
 
 /* refer linux:ip6_input_finish() */
 static int ip6_local_in_fin(struct rte_mbuf *mbuf)
@@ -279,7 +290,7 @@ static inline struct in6_addr *ip6_rt_nexthop(struct route6 *rt,
         return &rt->rt6_gateway;
 }
 
-static inline unsigned int ip6_mtu_forward(struct route6 *rt)
+inline unsigned int ip6_mtu_forward(struct route6 *rt)
 {
     if (rt->rt6_mtu)
         return rt->rt6_mtu;
@@ -409,7 +420,7 @@ static int ip6_forward(struct rte_mbuf *mbuf)
 {
     struct ip6_hdr *hdr = ip6_hdr(mbuf);
     struct route6 *rt = mbuf_userdata_get(mbuf);
-    int addrtype;
+    int addrtype, rc;
     uint32_t mtu;
 
     if (!conf_ipv6_forwarding)
@@ -454,6 +465,13 @@ static int ip6_forward(struct rte_mbuf *mbuf)
         IP6_INC_STATS(intoobigerrors);
         IP6_INC_STATS(fragfails);
         goto drop;
+    }
+
+    rc = flow_processing_paks(mbuf);
+    if (rc < FLOW_RET_OK) {
+        goto drop;
+    } else if (rc >= FLOW_RET_FWD_BAR && rc <= FLOW_RET_FWD_BAR2) {
+        return EDPVS_INVAL;
     }
 
     /* decrease TTL */

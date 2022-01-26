@@ -22,6 +22,7 @@
 #include "netif_addr.h"
 #include "timer.h"
 #include "sa_pool.h"
+#include "neigh.h"
 #include "ndisc.h"
 #include "route.h"
 #include "route6.h"
@@ -496,7 +497,8 @@ struct inet_ifaddr *inet_addr_ifa_get_expired(int af, const struct netif_port *d
 
 void inet_addr_ifa_put(struct inet_ifaddr *ifa)
 {
-    ifa_put(ifa);
+    if (ifa)
+        ifa_put(ifa);
 }
 
 void inet_addr_select(int af, const struct netif_port *dev,
@@ -983,6 +985,12 @@ static int ifa_entry_del(const struct ifaddr_action *param)
     return EDPVS_OK;
 }
 
+extern int route_add_ifaddr(struct inet_ifaddr *s_ifa);
+extern int route_del_ifaddr(struct inet_ifaddr *s_ifa, uint8_t local_keep);
+extern int
+route_add_ifaddr_v6(struct inet_addr_param *param);
+extern int
+route_del_ifaddr_v6(struct inet_addr_param *param);
 static int ifa_entry_flush(const struct ifaddr_action *param)
 {
     struct inet_ifaddr *ifa, *nxt;
@@ -996,9 +1004,10 @@ static int ifa_entry_flush(const struct ifaddr_action *param)
     if (unlikely(!idev))
         return EDPVS_RESOURCE;
 
-    list_for_each_entry_safe(ifa, nxt, &idev->ifa_list[cid], d_list) {
+    list_for_each_entry_safe(ifa, nxt, &idev->ifa_list[cid], d_list) {       
         rte_atomic32_inc(&ifa->refcnt); /* hold @ifa before unhash */
         ifa_unhash(ifa);
+        route_del_ifaddr(ifa, 0);
         ifa_put(ifa);
     }
 
@@ -1214,7 +1223,7 @@ static int ifa_msg_set_cb(struct dpvs_msg *msg)
             return ifa_entry_del(param);
         case INET_ADDR_MOD:
             return ifa_entry_mod(param);
-        case INET_ADDR_FLUSH:
+        case INET_ADDR_FLUSH:                     
             return ifa_entry_flush(param);
         case INET_ADDR_SYNC:
             return ifa_entry_sync(param);
@@ -1393,6 +1402,7 @@ static int __inet_addr_flush(const struct ifaddr_action *param)
     struct dpvs_msg *msg;
 
     err = ifa_entry_flush(param);
+    return err; // dont send msg
     if (err != EDPVS_OK)
         return err;
 
@@ -1808,43 +1818,566 @@ static struct dpvs_sockopts ifa_sockopts = {
     .get            = ifa_sockopt_get,
 };
 
+static const char *af_itoa(int af)
+{
+    struct {
+        uint8_t i_af;
+        const char *s_af;
+    } family_tab[] = {
+        { AF_INET,  "inet" },
+        { AF_INET6, "inet6" },
+        { AF_UNSPEC, "unspec" },
+    };
+    int i;
+
+    for (i = 0; i < NELEMS(family_tab); i++) {
+        if (af == family_tab[i].i_af)
+            return family_tab[i].s_af;
+    }
+
+    return "<unknow>";
+}
+static int inet_pton_try(int *af, const char *src, union inet_addr *dst)
+{
+    int err;
+
+    if (*af == AF_INET)
+        err = inet_pton(AF_INET, src, &dst->in);
+    else if (*af == AF_INET6)
+        err = inet_pton(AF_INET6, src, &dst->in6);
+    else {
+        if ((err = inet_pton(AF_INET, src, &dst->in)) > 0)
+            *af = AF_INET;
+        else if ((err = inet_pton(AF_INET6, src, &dst->in6)) > 0)
+            *af = AF_INET6;
+        else
+            *af = AF_UNSPEC;
+    }
+
+    if (err <= 0)
+        fprintf(stderr, "invalid ipaddress: %s %s\n", af_itoa(*af), src);
+
+    return err;
+}
+
+static const char *lft_itoa(uint32_t lft, char *buf, size_t size)
+{
+    if (!lft)
+        snprintf(buf, size, "forever");
+    else
+        snprintf(buf, size, "%u", lft);
+
+    return buf;
+}
+
+
+static const char *scope_itoa(uint8_t scope, char *buf, size_t size)
+{
+    struct {
+        uint8_t iscope;
+        const char *sscope;
+    } scope_tab[] = {
+        { IFA_SCOPE_HOST,    "host" },
+        { IFA_SCOPE_LINK,    "link" },
+        { IFA_SCOPE_SITE,    "site" },
+        { IFA_SCOPE_GLOBAL,    "global" },
+    };
+    int i;
+
+    for (i = 0; i < NELEMS(scope_tab); i++) {
+        if (scope == scope_tab[i].iscope) {
+            snprintf(buf, size, "%s", scope_tab[i].sscope);
+            return buf;
+        }
+    }
+
+    snprintf(buf, size, "%u", scope);
+    return buf;
+}
+
+/*
+static int addr_parse_args(struct dpip_conf *conf,
+                           struct inet_addr_param *param)
+{
+    char *prefix = NULL;
+    char *addr, *plen;
+
+    memset(param, 0, sizeof(*param));
+
+    if (conf->verbose)
+        param->ifa_ops_flags |= IFA_F_OPS_VERBOSE;
+    if (conf->stats)
+        param->ifa_ops_flags |= IFA_F_OPS_STATS;
+
+    param->ifa_entry.af = conf->af;
+    param->ifa_entry.scope = IFA_SCOPE_GLOBAL;
+
+    while (conf->argc > 0) {
+        if (strcmp(conf->argv[0], "dev") == 0) {
+            NEXTARG_CHECK(conf, "dev");
+            snprintf(param->ifa_entry.ifname, sizeof(param->ifa_entry.ifname), "%s", conf->argv[0]);
+        } else if (strcmp(conf->argv[0], "scope") == 0) {
+            NEXTARG_CHECK(conf, "scope");
+
+            if (strcmp(conf->argv[0], "host") == 0)
+                param->ifa_entry.scope = IFA_SCOPE_HOST;
+            else if (strcmp(conf->argv[0], "link") == 0)
+                param->ifa_entry.scope = IFA_SCOPE_LINK;
+            else if (strcmp(conf->argv[0], "global") == 0)
+                param->ifa_entry.scope = IFA_SCOPE_GLOBAL;
+            else
+                param->ifa_entry.scope = atoi(conf->argv[0]);
+        } else if (strcmp(conf->argv[0], "broadcast") == 0) {
+            NEXTARG_CHECK(conf, "broadcast");
+            if (inet_pton_try(&param->ifa_entry.af, conf->argv[0], &param->ifa_entry.bcast) <= 0)
+                return -1;
+        } else if (strcmp(conf->argv[0], "valid_lft") == 0) {
+            NEXTARG_CHECK(conf, "valid_lft");
+
+            if (strcmp(conf->argv[0], "forever") == 0)
+                param->ifa_entry.valid_lft = 0;
+            else
+                param->ifa_entry.valid_lft = atoi(conf->argv[0]);
+        } else if (strcmp(conf->argv[0], "prefered_lft") == 0) {
+            NEXTARG_CHECK(conf, "prefered_lft");
+
+            if (strcmp(conf->argv[0], "forever") == 0)
+                param->ifa_entry.prefered_lft = 0;
+            else
+                param->ifa_entry.prefered_lft = atoi(conf->argv[0]);
+        } else if (strcmp(conf->argv[0], "sapool") == 0) {
+            param->ifa_entry.flags |= IFA_F_SAPOOL;
+        } else {
+            prefix = conf->argv[0];
+        }
+
+        NEXTARG(conf);
+    }
+
+    if (conf->argc > 0) {
+        fprintf(stderr, "too many arguments\n");
+        return -1;
+    }
+
+    if (conf->cmd == DPIP_CMD_ADD || conf->cmd == DPIP_CMD_DEL
+            || conf->cmd == DPIP_CMD_SET) {
+        if (!prefix) {
+            fprintf(stderr, "missing IFADDR\n");
+            return -1;
+        }
+    }
+
+    if (prefix) {
+        addr = prefix;
+        if ((plen = strchr(addr, '/')) != NULL)
+            *plen++ = '\0';
+        if (inet_pton_try(&param->ifa_entry.af, prefix, &param->ifa_entry.addr) <= 0)
+            return -1;
+        param->ifa_entry.plen = plen ? atoi(plen) : 0;
+    }
+
+    switch (param->ifa_entry.af) {
+    case AF_INET:
+        if (!param->ifa_entry.plen)
+            param->ifa_entry.plen = 32;
+        break;
+    case AF_INET6:
+        if (!param->ifa_entry.plen)
+            param->ifa_entry.plen = 128;
+        break;
+    default:
+        break;
+    }
+
+    if (conf->cmd != DPIP_CMD_SHOW && !strlen(param->ifa_entry.ifname)) {
+        fprintf(stderr, "no device specified.\n");
+        return -1;
+    }
+
+    return 0;
+}*/
+static void  set_vaild_lft_cli(struct inet_addr_param *param, cmd_blk_t *cbt){
+
+	param->ifa_entry.valid_lft = cbt->number[0];
+}
+
+static void  set_scope_cli(struct inet_addr_param *param, cmd_blk_t *cbt){
+
+	switch(cbt->which[3]){
+		case 1:{
+			param->ifa_entry.scope = IFA_SCOPE_HOST;
+			break;
+		}
+		case 2:{
+			param->ifa_entry.scope = IFA_SCOPE_LINK;
+			break;
+		}
+		case 3:{
+			param->ifa_entry.scope = IFA_SCOPE_GLOBAL;
+			break;
+		}
+		default:{
+			param->ifa_entry.scope = cbt->which[1];
+		}
+	}
+}
+
+static void set_sapool_cli(struct inet_addr_param *param, cmd_blk_t *cbt){
+	param->ifa_entry.flags |= IFA_F_SAPOOL;
+}
+
+static int 
+add_netif_addr(struct inet_addr_param *param, cmd_blk_t *cbt){
+    struct netif_port *dev;
+	int err = 0;
+    if (!ifa_prefix_check(param->ifa_entry.af,
+                          &param->ifa_entry.addr,
+                          param->ifa_entry.plen)) {
+        tyflow_cmdline_printf(cbt->cl , "%s: bad %s prefix %d\n", __func__,
+                param->ifa_entry.af == AF_INET ? "ipv4" : "ipv6",
+                param->ifa_entry.plen);
+        return EDPVS_INVAL;
+    }
+
+
+    dev = netif_port_get_by_name(param->ifa_entry.ifname);
+    if (!dev) {
+        tyflow_cmdline_printf(cbt->cl, "%s: device %s not found\n", __func__,
+                param->ifa_entry.ifname);
+        return EDPVS_NOTEXIST;
+    }
+
+	if(cbt->mode == MODE_DO){
+		err = inet_addr_add(param->ifa_entry.af, dev,
+                         &param->ifa_entry.addr,
+                         param->ifa_entry.plen,
+                         &param->ifa_entry.bcast,
+                         param->ifa_entry.valid_lft,
+                         param->ifa_entry.prefered_lft,
+                         param->ifa_entry.scope,
+                         param->ifa_entry.flags);
+	}else{
+		err = inet_addr_del(param->ifa_entry.af, dev,
+                                 &param->ifa_entry.addr,
+                                 param->ifa_entry.plen);
+	}
+
+	return err;
+}
+
+static int 
+mod_netif_addr(struct inet_addr_param *param, cmd_blk_t *cbt){
+    struct netif_port *dev;
+
+    if (!ifa_prefix_check(param->ifa_entry.af,
+                          &param->ifa_entry.addr,
+                          param->ifa_entry.plen)) {
+        tyflow_cmdline_printf(cbt->cl , "%s: bad %s prefix %d\n", __func__,
+                param->ifa_entry.af == AF_INET ? "ipv4" : "ipv6",
+                param->ifa_entry.plen);
+        return EDPVS_INVAL;
+    }
+
+
+    dev = netif_port_get_by_name(param->ifa_entry.ifname);
+    if (!dev) {
+        tyflow_cmdline_printf(cbt->cl, "%s: device %s not found\n", __func__,
+                param->ifa_entry.ifname);
+        return EDPVS_NOTEXIST;
+    }
+
+	return inet_addr_mod(param->ifa_entry.af, dev,
+                                 &param->ifa_entry.addr,
+                                 param->ifa_entry.plen,
+                                 &param->ifa_entry.bcast,
+                                 param->ifa_entry.valid_lft,
+                                 param->ifa_entry.prefered_lft,
+                                 param->ifa_entry.scope);
+
+}
+
 static int
 set_address_cli(cmd_blk_t *cbt)
 {
-	int i;
-	tyflow_cmdline_printf(cbt->cl, "mode: %s\n", (cbt->mode==MODE_DO)?"do":"undo");
-	tyflow_cmdline_printf(cbt->cl, "number cnt: %d\n", cbt->number_cnt);
-	for (i=0; i<cbt->number_cnt; i++) {
-		tyflow_cmdline_printf(cbt->cl, "\t%d: %d\n", i, cbt->number[i]);
+	struct inet_addr_param param;
+	char *prefix = NULL;
+	char *addr, *plen;
+	int err = 0;
+	memset(&param, 0, sizeof(struct inet_addr_param));
+	
+	param.ifa_entry.af = AF_INET;
+    param.ifa_entry.scope = IFA_SCOPE_GLOBAL;
+	param.ifa_entry.plen = 32;
+	prefix = cbt->string[0];
+    if(cbt->which[0] == 6){
+        param.ifa_entry.af = AF_INET6;
+    }
+
+	if (!prefix) {
+		tyflow_cmdline_printf(cbt->cl,"missing IFADDR\n");
+		return -1;
 	}
-	tyflow_cmdline_printf(cbt->cl, "which cnt: %d\n", cbt->which_cnt);
-	for (i=0; i<cbt->which_cnt; i++) {
-		tyflow_cmdline_printf(cbt->cl, "\t%d: %d\n", i, cbt->which[i]);
+
+    if (prefix) {
+        addr = prefix;
+        if ((plen = strchr(addr, '/')) != NULL)
+            *plen++ = '\0';
+        if (inet_pton_try(&param.ifa_entry.af, prefix, &param.ifa_entry.addr) <= 0)
+            return -1;
+        param.ifa_entry.plen = plen ? atoi(plen) : 0;
+    }
+	snprintf(param.ifa_entry.ifname, sizeof(param.ifa_entry.ifname), "%s", cbt->string[1]);
+
+	switch(cbt->which[2]){
+		case 0:
+			break;
+		case 1:
+			set_vaild_lft_cli(&param, cbt);
+			break;
+		case 2:
+			set_scope_cli(&param, cbt);
+			break;
+		case 3:
+			set_sapool_cli(&param, cbt);
+			break;
+		default:
+		{
+			tyflow_cmdline_printf(cbt->cl, "unrecognized opt!\n");
+			return EDPVS_INVAL;
+		}
 	}
-	tyflow_cmdline_printf(cbt->cl, "string cnt: %d\n", cbt->string_cnt);
-	for (i=0; i<cbt->string_cnt; i++) {
-		tyflow_cmdline_printf(cbt->cl, "\t%d: %s\n", i, cbt->string[i]);
+
+	switch(cbt->which[1]){
+		case 1:{
+			err = add_netif_addr(&param, cbt);
+            if (err == EDPVS_OK) {                
+                if (param.ifa_entry.af == AF_INET) {
+                    struct inet_ifaddr ifa;
+                    struct inet_device idev;
+                    ifa.idev = &idev;
+                    ifa.addr = param.ifa_entry.addr;
+                    ifa.bcast = param.ifa_entry.bcast;
+                    ifa.plen = param.ifa_entry.plen;
+                    ifa.idev->dev = netif_port_get_by_name(param.ifa_entry.ifname);
+                    if(cbt->mode == MODE_DO)
+                        route_add_ifaddr(&ifa);
+                    else
+                        route_del_ifaddr(&ifa, 0);
+                } else {
+                    if(cbt->mode == MODE_DO)
+                        route_add_ifaddr_v6(&param);
+                    else 
+                        route_del_ifaddr_v6(&param);
+                }
+            }
+			break;
+		}
+		case 2:{
+			err = mod_netif_addr(&param, cbt);
+			break;
+		}
+		default:
+		{
+			tyflow_cmdline_printf(cbt->cl, "unrecognized opt!\n");
+			return EDPVS_INVAL;
+		}
 	}
-	return 0;
+
+	if(err != EDPVS_OK){
+		tyflow_cmdline_printf(cbt->cl, "failed err = %d\n", err);
+	}
+	return err;
 }
 
-EOL_NODE(address_eol, set_address_cli);
-KW_NODE_WHICH(address_scope_type_global, address_eol, none, "global", "the global scope", 2, 3);
-KW_NODE_WHICH(address_scope_type_link, address_eol, address_scope_type_global, "link", "the link scope", 2, 2);
-KW_NODE_WHICH(address_scope_type_host, address_eol, address_scope_type_link, "host", "the host scope", 2, 1);
+static void addr_dump(const struct inet_addr_data *data, uint32_t flags, struct cmdline *cl)
+{
+    char addr[64], bcast[64 + sizeof("broadcast ")];
+    char scope[64], vld_lft[64], prf_lft[64];
+
+	tyflow_cmdline_printf(cl, "\n");
+    bcast[0] = '\0';
+    if (!inet_is_addr_any(data->ifa_entry.af, &data->ifa_entry.bcast)) {
+        snprintf(bcast, sizeof(bcast), "broadcast ");
+        if (inet_ntop(data->ifa_entry.af, &data->ifa_entry.bcast, bcast + strlen(bcast),
+                      sizeof(bcast) - strlen(bcast)) == NULL)
+            bcast[0] = '\0';
+    }
+
+    if (flags & IFA_F_OPS_VERBOSE)
+        tyflow_cmdline_printf(cl, "[%02d] ", data->ifa_entry.cid);
+    tyflow_cmdline_printf(cl, "%s %s/%d scope %s %s\n    %s valid_lft %s preferred_lft %s",
+           af_itoa(data->ifa_entry.af),
+           inet_ntop(data->ifa_entry.af, &data->ifa_entry.addr, addr, sizeof(addr)) ? addr : "::",
+           data->ifa_entry.plen, scope_itoa(data->ifa_entry.scope, scope, sizeof(scope)),
+           data->ifa_entry.ifname, bcast,
+           lft_itoa(data->ifa_entry.valid_lft, vld_lft, sizeof(vld_lft)),
+           lft_itoa(data->ifa_entry.prefered_lft, prf_lft, sizeof(prf_lft)));
+
+    if ((flags & (IFA_F_OPS_STATS | IFA_F_OPS_VERBOSE)) && (data->ifa_entry.flags & IFA_F_SAPOOL))
+        tyflow_cmdline_printf(cl, " sa_used %u sa_free %u sa_miss %u",
+               data->ifa_stats.sa_used, data->ifa_stats.sa_free, data->ifa_stats.sa_miss);
+
+    tyflow_cmdline_printf(cl, "\n");
+
+    return;
+}
+
+static int 
+get_netif_addr(struct inet_addr_param *param, cmd_blk_t *cbt){
+	int err, i, len = 0;
+    struct netif_port *dev;
+    struct inet_device *idev = NULL;
+    struct inet_addr_data_array *array = NULL;
+
+    if (param->ifa_entry.af != AF_INET &&
+        param->ifa_entry.af != AF_INET6 &&
+        param->ifa_entry.af != AF_UNSPEC)
+        return EDPVS_NOTSUPP;
+
+    if (strlen(param->ifa_entry.ifname)) {
+        dev = netif_port_get_by_name(param->ifa_entry.ifname);
+        if (!dev) {
+            tyflow_cmdline_printf(cbt->cl, "%s: no such device: %s\n",
+                    __func__, param->ifa_entry.ifname);
+            return EDPVS_NOTEXIST;
+        }
+
+        idev = dev_get_idev(dev);
+        if (!idev)
+            return EDPVS_RESOURCE;
+    }
+
+    if (param->ifa_ops_flags & IFA_F_OPS_VERBOSE)
+        err = ifaddr_get_verbose(idev, &array, &len);
+    else if (param->ifa_ops_flags & IFA_F_OPS_STATS)
+        err = ifaddr_get_stats(idev, &array, &len);
+    else
+        err = ifaddr_get_basic(idev, &array, &len);
+
+    if (err != EDPVS_OK) {
+        tyflow_cmdline_printf(cbt->cl, "%s: fail to get inet addresses -- %s!\n",
+                __func__, dpvs_strerror(err));
+        return err;
+    }
+
+    if (idev)
+        idev_put(idev);
+
+    if (array) {
+        array->ops = INET_ADDR_GET;
+        array->ops_flags = param->ifa_ops_flags;
+    }
+
+	for (i = 0; i < array->naddr; i++)
+		addr_dump(&array->addrs[i], array->ops_flags, cbt->cl);
+	
+	rte_free(array);
+
+    return EDPVS_OK;
+}
+
+static 
+int show_address_cli(cmd_blk_t *cbt){
+	struct inet_addr_param param;
+	int err = 0;
+	param.ifa_entry.af = AF_INET;
+    param.ifa_entry.scope = IFA_SCOPE_GLOBAL;
+
+	memset(&param, 0, sizeof(struct inet_addr_param));
+
+	snprintf(param.ifa_entry.ifname, sizeof(param.ifa_entry.ifname), "%s", cbt->string[0]);
+
+    if (cbt->which[0] == 6){
+        param.ifa_entry.af = AF_INET6;
+    }
+
+	switch(cbt->which[1]){
+		case 0:{
+			break;
+		}
+		case 1:{
+			param.ifa_ops_flags |= IFA_F_OPS_VERBOSE;
+			break;
+		}
+		case 2:{
+			param.ifa_ops_flags |= IFA_F_OPS_STATS;
+			break;
+		}
+		default:{
+			tyflow_cmdline_printf(cbt->cl, "unrecognized opt!\n");
+			return EDPVS_INVAL;
+		}
+	}
+	
+	err = get_netif_addr(&param, cbt);
+	if(err != EDPVS_OK){
+		tyflow_cmdline_printf(cbt->cl, "failed err = %d\n", err);
+	}
+
+	return err;
+}
+
+static flush_address_cli(cmd_blk_t *cbt){
+	struct inet_addr_param param;
+	struct netif_port *dev = NULL;
+	int err = 0;
+	param.ifa_entry.af = AF_INET;
+    param.ifa_entry.scope = IFA_SCOPE_GLOBAL;
+
+	memset(&param, 0, sizeof(struct inet_addr_param));
+
+	snprintf(param.ifa_entry.ifname, sizeof(param.ifa_entry.ifname), "%s", cbt->string[2]);
+
+	dev = netif_port_get_by_name(param.ifa_entry.ifname);
+    if (!dev) {
+        tyflow_cmdline_printf(cbt->cl,  "%s: device %s not found\n", __func__,
+                param.ifa_entry.ifname);
+        return EDPVS_NOTEXIST;
+    }
+
+	err = inet_addr_flush(param.ifa_entry.af, dev);
+	if(err != EDPVS_OK){
+		tyflow_cmdline_printf(cbt->cl, "failed err = %d\n", err);
+	}
+
+	return err;
+}
+EOL_NODE_NEED_MAIN_EXEC(address_eol, set_address_cli);
+KW_NODE_WHICH(address_scope_type_global, address_eol, none, "global", "the global scope", 4, 3);
+KW_NODE_WHICH(address_scope_type_link, address_eol, address_scope_type_global, "link", "the link scope", 4, 2);
+KW_NODE_WHICH(address_scope_type_host, address_eol, address_scope_type_link, "host", "the host scope", 4, 1);
 VALUE_NODE(address_valid_lft_value, address_eol, none, "set the life time", 1, NUM);
-KW_NODE_WHICH(address_sapool, address_eol, address_eol, "sapool", "make the address as sapool", 1, 3);
-KW_NODE_WHICH(address_scope, address_scope_type_host, address_sapool, "scope", "define the address scope", 1, 2);
-KW_NODE_WHICH(address_valid_lft, address_valid_lft_value, address_scope, "valid_lft", "valid life time", 1, 1);
+KW_NODE_WHICH(address_sapool, address_eol, address_eol, "sapool", "make the address as sapool", 3, 3);
+KW_NODE_WHICH(address_scope, address_scope_type_host, address_sapool, "scope", "define the address scope", 3, 2);
+KW_NODE_WHICH(address_valid_lft, address_valid_lft_value, address_scope, "valid_lft", "valid life time", 3, 1);
 VALUE_NODE(address_interface_name, address_valid_lft, none, "interface name", 2, STR);
 KW_NODE(address_interface, address_interface_name, none, "interface", "the specific interface");
 VALUE_NODE(address_ip, address_interface, none, "ip address", 1, STR);
-KW_NODE(address, address_ip, none, "address", "ip address");
+
+EOL_NODE_NEED_MAIN_EXEC(flush_address_eol, flush_address_cli);
+VALUE_NODE(flush_interface_name, flush_address_eol, none, "interface name", 3, STR);
+KW_NODE(flush_interface, flush_interface_name, none, "interface", "the specific interface");
+KW_NODE_WHICH(address_flush, flush_interface, none, "flush", "flush all ip on one interface", 2, 3);
+KW_NODE_WHICH(address_modify, address_ip, address_flush, "modify", "modify ip address", 2, 2);
+KW_NODE_WHICH(address_add, address_ip, address_modify, "add", "add address", 2, 1);
+KW_NODE_WHICH(addressipv6, address_add, address_add, "v6", "ipv6 address", 1, 6);
+KW_NODE(address, addressipv6, none, "address", "ip address");
+
+
+EOL_NODE_NEED_MAIN_EXEC(show_address_eol, show_address_cli);
+KW_NODE_WHICH(show_addr_stat, show_address_eol, show_address_eol, "stat", "show stats", 2, 2);
+KW_NODE_WHICH(show_addr_verbose, show_address_eol, show_addr_stat, "verbose", "show verbose", 2, 1);
+VALUE_NODE(address_dev_name, show_address_eol, none, "dev-name, such as dpdk0", 1, STR);
+KW_NODE(show_dev_addr, address_dev_name, show_addr_verbose, "dev", "the specific interface");
+KW_NODE_WHICH(show_dev_addr_v6, show_dev_addr, show_dev_addr, "v6", "ipv6 address", 1, 6);
+KW_NODE(address_show, show_dev_addr_v6, none, "address", "show address");
+
 
 static void
 inet_addr_cli_init(void)
 {
 	add_set_cmd(&cnode(address));
+	add_get_cmd(&cnode(address_show));
 }
 
 int inet_addr_init(void)

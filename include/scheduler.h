@@ -56,6 +56,8 @@ struct dpvs_lcore_job_array {
     dpvs_lcore_role_t role;
 };
 
+extern uint32_t dpvs_terminate;
+
 const char *dpvs_lcore_role_str(dpvs_lcore_role_t role);
 
 void dpvs_lcore_job_init(struct dpvs_lcore_job *job, char *name,
@@ -70,5 +72,7 @@ int dpvs_scheduler_term(void);
 
 int
 ctflow_console_job_start(void);
+int
+tyflow_vty_job_start(void);
 
 #endif

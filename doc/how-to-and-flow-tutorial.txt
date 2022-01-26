@@ -34,4 +34,38 @@
        b.5.iiii> parameter src-port and dst-port have the same low/high semantic to protocol
 
 
-3. how to confirm the flow issue?
+3. how to use the flow debug?
+   a> flow_debug_trace(flag, fmt, arg...) -- print the (fmt, arg...) to flow debug buffer, which is a limited size memory buffer;
+      the flag can be FLOW_DEBUG_BASIC | FLOW_DEBUG_EVENT | FLOW_DEBUG_PACKET | FLOW_DEBUG_DETAIL, which are correspond to the CLI: 
+      "debug flow ..."
+   b> flow_debug_trace_no_flag(fmt, arg...) -- print the (fmt, arg...) to flow debug buffer unconditional
+   c> flow_debug_packet(mac, mbuf) -- print the packet to flow debug buffer if "debug flow packet" is enabled, the format is the same to "tcpdump", mac==1 means printing the packet starting from mac header
+   d> flow_print(fmt, arg...) -- print the (fmt, arg...) if at least one ffilter is matched, ffilter can be set by CLI "set ffilter ..."
+   e> flow_print_basic(fmt, arg...) -- print the (fmt, arg...) if "debug flow basic" is set and at least one ffilter is matched
+   f> flow_print_packet(mbuf) -- the same to flow_debug_packet, but need to match one ffilter firstly
+
+
+4. how to add a synchronized command which need to execute on fwd lcore?
+   a> use the eg. in flow_cli.c
+   b> add the command and the command handler (show_flow_connection_cli)
+   c> define a message type on cmd_msg_tpye_t, the corresponding handler(will be executed on fwd lcore), and the echo_handler(will be executed on main thread) if any
+   d> call cmd_msg_handler_register to reigster the message type, the handler and the echo handler, cookie is needed only if multiple fwd lcore access to the same area
+   e> if you have several command and only one command handler, you can define some subtype to dispatch the process (like FLOW_CMD_MSG_SUBTYPE_SUMMARY, FLOW_CMD_MSG_SUBTYPE_ALL, FLOW_CMD_MSG_SUBTYPE_DETAIL, FLOW_CMD_MSG_SUBTYPE_COUNTER ...)
+   f> the sequence of execution:
+      f.1> the command handler (show_flow_connection_cli)
+      f.2> set the message type and subtype(if any)
+      f.3> send_cmd_msg_to_fwd_lcore
+      f.4> on fwd lcore, call the registered handler (show_flow_connection), any return value, store it to msg->rc
+      f.5> on main thread, call the registered echo_handler (show_flow_connection_echo)
+      f.6> loop step 4/5 at every fwd lcore
+      f.7> send_cmd_msg_to_fwd_lcore return
+
+
+5. how to use dpvs receiving packets but not the graph?
+   a> export CFLAGS="-DTYFLOW -DTYFLOW_LEGACY"
+   b> make
+
+
+6. how to unset/undebug one item with different format to set/debug?
+   a> use the eg. in ffilter.c
+   b> use "TEST_UNSET" to distinguish the "un" operation

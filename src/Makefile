@@ -42,16 +42,21 @@ SRCDIR := $(dir $(realpath $(firstword $(MAKEFILE_LIST))))
 include $(SRCDIR)/config.mk
 include $(SRCDIR)/dpdk.mk
 
-INCDIRS += -I $(SRCDIR)/../include
+INCDIRS += -I$(SRCDIR)/../include -I$(SRCDIR)/flow_l3/include -I$(SRCDIR)/l2/include -I$(SRCDIR)/vrrp
 
 CFLAGS += -g
 # CFLAGS += -DCONFIG_DPVS_NETIF_DEBUG
 # for dpvs main program.
 CFLAGS += -D __DPVS__ -DDPVS_VERSION=\"$(VERSION_STRING)\" -DDPVS_BUILD_DATE=\"$(DATE_STRING)\"
 
-CFLAGS += -Wall -Wstrict-prototypes -Wmissing-prototypes -mcmodel=medium #-Werror
+CFLAGS += -Wall -Wstrict-prototypes -Wmissing-prototypes -mcmodel=medium #-Werror -Wno-error=deprecated-declarations
+
+#CFLAGS += -Wno-deprecated-declarations
+
+CFLAGS += -Wno-error=unused-variable -Wno-error=missing-prototypes -Wno-error=comment -Wno-error=missing-braces
 
 CFLAGS +=  -march=native
+#CFLAGS += -march=corei7
 
 ifeq ($(shell test $(GCC_VERSION) -ge 70 && echo 1), 1)
 	CFLAGS += -Wno-format-truncation
@@ -73,20 +78,23 @@ CFLAGS += $(INCDIRS) $(LIBS) -fgnu89-inline
 
 OBJS := $(shell find $(SRCDIR) -name '*.c' | sort)
 OBJS := $(patsubst %.c,%.o,$(OBJS))
+DEPS := $(patsubst %.o,%.d,$(OBJS))
 
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	@echo "  $(notdir $@)"
-	$(Q)$(CC) $(CFLAGS) $^ -o $@
+#	@echo "  $(notdir $@)"
+	$(CC) $(CFLAGS) $^ -o $@
 
+-include $(DEPS)
 %.o: %.c
-	@echo "  $(notdir $@)"
-	$(Q)$(CC) -c $(CFLAGS) $< -o $@
+#	@echo "  $(notdir $@)"
+	$(CC) -c -MMD -MP $(CFLAGS) $< -o $@
 
 clean:
 	find $(SRCDIR) -name '*.o' | xargs rm -f
 	rm -f ./$(TARGET)
+	rm -f $(DEPS)
 
 install:
 	install -m 744 $(TARGET) $(INSDIR)

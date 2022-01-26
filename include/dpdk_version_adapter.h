@@ -63,8 +63,11 @@
 #include <rte_graph_worker.h>
 #include <rte_node_eth_api.h>
 #include <rte_hash.h>
+#include <node_private.h>
+#include <ether_output_priv.h>
 //#include <rte_cuckoo_hash.h>
 #include <rte_rcu_qsbr.h>
+#include <rte_version.h>
 
 struct mbuf_priv_userdata {
 	RTE_STD_C11
@@ -74,20 +77,63 @@ struct mbuf_priv_userdata {
 	};
 };
 
+struct mbuf_priv_dev {
+		void *dev;   /**< Can be used for external metadata */
+};
+
 static const struct rte_mbuf_dynfield mbuf_userdata_dynfield_desc = {
 	.name = "mbuf_userdata_dynfield",
 	.size = sizeof(struct mbuf_priv_userdata),
 	.align = __alignof__(struct mbuf_priv_userdata),
 };
 
+static const struct rte_mbuf_dynfield mbuf_dev_dynfield_desc = {
+	.name = "mbuf_dev_dynfield",
+	.size = sizeof(struct mbuf_priv_dev),
+	.align = __alignof__(struct mbuf_priv_dev),
+};
 
 extern int mbuf_userdata_dynfield_offset;
+extern int mbuf_dev_dynfield_offset;
 
 int dpdk_priv_userdata_register(void);
-__rte_always_inline  void *mbuf_userdata_get(struct rte_mbuf *m);
-__rte_always_inline void mbuf_userdata_set(struct rte_mbuf *m, void *userdata);
+int dpdk_priv_dev_register(void);
 
-__rte_always_inline  uint64_t mbuf_udata64_get(struct rte_mbuf *m);
-__rte_always_inline void mbuf_udata64_set(struct rte_mbuf *m, uint64_t udata64);
+static __rte_always_inline void *
+mbuf_userdata_get(struct rte_mbuf *m)
+{
+	return RTE_MBUF_DYNFIELD(m, mbuf_userdata_dynfield_offset, struct mbuf_priv_userdata *)->userdata;
+}
+
+static __rte_always_inline void
+mbuf_userdata_set(struct rte_mbuf *m, void *userdata)
+{
+	RTE_MBUF_DYNFIELD(m, mbuf_userdata_dynfield_offset, struct mbuf_priv_userdata *)->userdata = userdata;
+}
+
+static __rte_always_inline uint64_t
+mbuf_udata64_get(struct rte_mbuf *m)
+{
+	return RTE_MBUF_DYNFIELD(m, mbuf_userdata_dynfield_offset, struct mbuf_priv_userdata *)->udata64;
+}
+
+static __rte_always_inline void
+mbuf_udata64_set(struct rte_mbuf *m, uint64_t udata64)
+{
+	RTE_MBUF_DYNFIELD(m, mbuf_userdata_dynfield_offset, struct mbuf_priv_userdata *)->udata64 = udata64;
+}
+
+static __rte_always_inline void*
+mbuf_dev_get(const struct rte_mbuf *m)
+{
+	return RTE_MBUF_DYNFIELD(m, mbuf_dev_dynfield_offset, struct mbuf_priv_dev *)->dev;
+}
+
+static __rte_always_inline void
+mbuf_dev_set(struct rte_mbuf *m, void *dev)
+{
+	RTE_MBUF_DYNFIELD(m, mbuf_dev_dynfield_offset, struct mbuf_priv_dev *)->dev = dev;
+}
+
 #endif /* __DPVS_DPDK_VERSON_ADAPTER_H__ */
 

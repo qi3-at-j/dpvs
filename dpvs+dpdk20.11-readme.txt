@@ -1,0 +1,38 @@
+
+dpvs 已经支持 dpdk20.11。有两点需要说明：
+
+1.大量修改的部分
+	因为dpdk20.11已经去掉mbuf的userdata字段，所以这一处修改比较多，主要表现就是接口：mbuf_userdata_get；
+	还有一部分就是结构体的变换 ，表现为例如 ether_addr -->rte_ether_addr;
+2.如何运行：
+   2.1 环境设置 
+	其他操作与dpvs+dpdk18的操作相同，甚至更简单：不用定义RTE_SDK，因为dpdk20.11已经把lib的全部文件都在系统路径下面了；
+	配置好dpdk的环境之后，可以直接运行.
+   
+   2.2 配置设置
+	因为底层用图库来支持，所以可能dpvs的推荐配置运行不起来，这里参考我的运行配置：my_dpvs.conf;
+	没有本质修改，可以直接替换掉/etc/dpvs.conf的文件。
+
+
+3.具体操作步骤：
+[root@db06 /home/user1/dpdk-20.11]# 
+[root@db06 /home/user1/dpdk-20.11]# 
+[root@db06 /home/user1/dpdk-20.11]# meson -Denable_kmods=true build
+[root@db06 /home/user1/dpdk-20.11]# cd build
+[root@db06 /home/user1/dpdk-20.11/build]# ninja
+[2478/2478] Linking target app/test/dpdk-test
+[root@db06 /home/user1/dpdk-20.11/build]# cd ../
+[root@db06 /home/user1/dpdk-20.11]# ./mystart.sh //设置dpdk20运行环境，大页内存什么的。建议自己写脚本比较方便 
+[root@db06 /home/user1/dpdk-20.11]# 
+[root@db06 /home/user1/dpdk-20.11]# insmod build/kernel/linux/kni/rte_kni.ko carrier=on
+[root@db06 /home/user1/dpdk-20.11]# cd build
+[root@db06 /home/user1/dpdk-20.11/build]# ninja install
+[root@db06 /home/user1/dpdk-20.11/build]#
+
+[root@db06 /home/user1/dpvs-git/flow]#//进入dpvs目录
+[root@db06 /home/user1/dpvs-git/flow]# make && make install
+[root@db06 /home/user1/dpvs-git/flow]# cd ../../dpvs-git/flow/
+[root@db06 /home/user1/dpvs-git/flow]# ./dpvs
+
+4.关于meson编译，可参考https://www.yuque.com/zzqcn/opensource/ik2tg2
+
