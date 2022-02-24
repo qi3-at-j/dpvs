@@ -290,10 +290,10 @@ typedef struct flow_connection_ {
 #define FC_INVALID             0x02000000
 #define FC_HALF_OPEN           0x01000000
 #define FC_CONTROL_CHANNEL     0x00800000
-#define FC_DATA_CHANNEL        0x00400000
+#define FC_DENY                0x00400000
 #define FC_INSTALLED           0x00200000
 #define FC_TUNNEL              0x00100000  /* it is a tunnel connection */
-#define FC_IN_AGER             0x00080000  /* it is a tunnel connection */
+#define FC_IN_AGER             0x00080000  /* it is in ager ring */
     uint64_t byte_cnt;
     uint64_t pkt_cnt;
     uint64_t policy_seq;
@@ -323,6 +323,7 @@ typedef struct flow_conn_context_ {
 
 typedef struct flow_conn_ager_context_ {
     rte_atomic32_t key;
+    rte_atomic32_t work;
     struct hlist_head *hash;
 #ifndef TYFLOW_PER_THREAD
     rte_rwlock_t *rwl;
@@ -429,6 +430,7 @@ enum {
     /* flow handle error related */
     FLOW_ERR_FLOW_START,
     FLOW_ERR_ICMP_GEN,
+    FLOW_ERR_FCP_DENY,
     FLOW_ERR_TO_SELF_DROP,
     FLOW_ERR_FCB_NO,
     FLOW_ERR_FCB_NO_MATCH,
@@ -507,6 +509,7 @@ static name_n_cnt flow_counter_template __rte_unused = {
 
     {"---------flow handling related statistics----------", FLOW_ERR_FLOW_START, 0},
     {"error icmp generated:", FLOW_ERR_ICMP_GEN, 0},
+    {"error match deny fcp:", FLOW_ERR_FCP_DENY, 0},
     {"error to-self drop:", FLOW_ERR_TO_SELF_DROP, 0},
     {"error no fcb:", FLOW_ERR_FCB_NO, 0},
     {"error no match fcb:", FLOW_ERR_FCB_NO_MATCH, 0},
@@ -635,6 +638,8 @@ CONN_SUB_COMP (conn_sub_t *csp, csp_key_t *key)
 }
 
 enum {
+    /* upper layer deny */
+    FLOW_RET_DENY  = -2,
     /* something error */
     FLOW_RET_ERR   = -1,
     /* good to go next */
@@ -709,6 +714,8 @@ void
 flow_refresh_connection(flow_connection_t *fcp);
 void
 set_fcp_invalid(flow_connection_t *fcp, uint32_t reason);
+void
+set_fcp_deny(flow_connection_t *fcp);
 extern uint16_t flow_protocol_timeout[IPPROTO_MAX];
 uint16_t
 flow_get_default_time(uint8_t proto);

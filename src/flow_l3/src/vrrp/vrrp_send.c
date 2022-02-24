@@ -47,7 +47,7 @@ vrrp_send(s_nc_param_l3 *param)
                 GET_MBUF_PRIV_DATA(mbuf)->p_priv_data_route = route_node;
                 next_node = VRRP_SEND_NEXT_IP4_OUTPUT;
             } else {
-                route4_put(route_node);
+                graph_route4_put(route_node);
             }
         } else {
             L3_DEBUG_TRACE(L3_ERR, "%s node:lookup %s failed!!!\n",

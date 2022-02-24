@@ -295,11 +295,7 @@ static inline int del_vxlan_notice(cmd_blk_t *cbt)
     uint16_t lcore_id;
 
     rte_rwlock_write_lock(&cmd_notice_entry.rwlock);
-    if (unlikely((ret = vxlan_tunnel_cpy(&cmd_notice_entry.data.vxlan_tunnel_node, cbt)))) {
-        tyflow_cmdline_printf(cbt->cl, "vxlan_tunnel_cpy err %d\n", ret);
-        rte_rwlock_write_unlock(&cmd_notice_entry.rwlock);
-        return -EINVAL;
-    }
+    cmd_notice_entry.data.vxlan_tunnel_node.vni = cbt->number[POS_NUM_VNI - 1];
     cmd_notice_entry.type = NT_DEL_VXLAN_TUNN;
     cmd_notice_entry.cbt = cbt;
     rte_rwlock_write_unlock(&cmd_notice_entry.rwlock);

@@ -43,6 +43,8 @@ def trans_level(level):
 
     return level_s
 
+method_all_list = list()
+target_all_list = list()
 
 def merge_desc_method_target(detect_dict, desc_dict, meth_dict, targ_dict):
     dict_all = dict()
@@ -88,6 +90,12 @@ def merge_desc_method_target(detect_dict, desc_dict, meth_dict, targ_dict):
                         continue
 
                     dict_all[rule_id]['method'].append(name + '-' + sub_name)
+                    xx = name + '-' + sub_name
+                    if xx not in method_all_list:
+                        method_all_list.append(xx)
+
+    #print('Method count: {}'.format(len(method_all_list)))
+    #print(method_all_list)
 
     # merge target
     for targ_id in targ_dict.keys():
@@ -106,6 +114,12 @@ def merge_desc_method_target(detect_dict, desc_dict, meth_dict, targ_dict):
                         continue
 
                     dict_all[rule_id]['target'].append(name + '-' + sub_name)
+                    xx = name + '-' + sub_name
+                    if xx not in target_all_list:
+                        target_all_list.append(xx)
+
+    #print('Target count: {}'.format(len(target_all_list)))
+    #print(target_all_list)
 
     # process multiple ac_sig
     for rule_id in detect_dict.keys():

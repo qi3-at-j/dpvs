@@ -10,6 +10,14 @@
 extern "C" {
 #endif
 
+struct conf_tbl_entry_size {
+    uint32_t tbl_size;
+    uint32_t route_entry_size;
+    uint32_t neigh_entry_size;
+    uint32_t vxlan_tunn_entry_size;
+    uint32_t vrf_bind_size;
+};
+
 enum cfg_type {
     GET_ROUTE_V4 = 0,
     GET_ROUTE_V4_DIP,
@@ -47,6 +55,11 @@ enum cfg_type {
     GET_SW_ARP,
     GET_SW_FWD,
     GET_SW_NF,
+    GET_PORT_IP4,
+    GET_PORT_IP6,
+    GET_VLAN_LINK,
+    GET_VLAN_ID,
+    GET_RATE_BANDWITH,
 };
 
 int flow_cfgfile_init(void);

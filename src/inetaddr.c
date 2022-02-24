@@ -1837,7 +1837,7 @@ static const char *af_itoa(int af)
 
     return "<unknow>";
 }
-static int inet_pton_try(int *af, const char *src, union inet_addr *dst)
+int inet_pton_try(int *af, const char *src, union inet_addr *dst)
 {
     int err;
 
@@ -2026,7 +2026,7 @@ static void set_sapool_cli(struct inet_addr_param *param, cmd_blk_t *cbt){
 	param->ifa_entry.flags |= IFA_F_SAPOOL;
 }
 
-static int 
+int 
 add_netif_addr(struct inet_addr_param *param, cmd_blk_t *cbt){
     struct netif_port *dev;
 	int err = 0;
@@ -2096,6 +2096,7 @@ mod_netif_addr(struct inet_addr_param *param, cmd_blk_t *cbt){
 
 }
 
+
 static int
 set_address_cli(cmd_blk_t *cbt)
 {
@@ -2111,6 +2112,7 @@ set_address_cli(cmd_blk_t *cbt)
 	prefix = cbt->string[0];
     if(cbt->which[0] == 6){
         param.ifa_entry.af = AF_INET6;
+        param.ifa_entry.plen = 128;
     }
 
 	if (!prefix) {
@@ -2188,6 +2190,7 @@ set_address_cli(cmd_blk_t *cbt)
 	}
 	return err;
 }
+
 
 static void addr_dump(const struct inet_addr_data *data, uint32_t flags, struct cmdline *cl)
 {

@@ -14,6 +14,8 @@
 
 int skfd = 0;
 
+static struct rte_eth_link g_link[NETIF_MAX_PORTS];
+
 static void
 ifstate_log(char *msg, ...)
 {
@@ -24,22 +26,30 @@ ifstate_log(char *msg, ...)
 	fflush(stderr);
 }
 
+int ifstate_get_link(struct netif_port *dev, struct rte_eth_link *link)
+{
+    if(dev->id > NETIF_MAX_PORTS)
+        return -1;
+    
+    memcpy(link, &g_link[dev->id], sizeof(*link));
+    return EDPVS_OK;
+}
+
 static int 
 link_detect(uint16_t port_id, struct netif_port **port_out)
 {
     struct netif_port *port;
-	struct rte_eth_link link;
 	int rc;
 
 	port = netif_port_get(port_id);
 	if (!port)
 		return EDPVS_NOTEXIST;
-	rc = netif_get_link(port, &link);
+	rc = netif_get_link(port, &g_link[port_id]);
 	if (rc != EDPVS_OK) {
 		return rc;
 	}
     *port_out = port; 
-	return (link.link_status==ETH_LINK_UP)?0:1;
+	return (g_link[port_id].link_status==ETH_LINK_UP)?0:1;
 #if 0
 	strcpy((char *)ifr.ifr_name, net_name);
 	rc = ioctl(skfd, SIOCGIFFLAGS, &ifr);

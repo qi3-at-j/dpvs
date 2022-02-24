@@ -129,7 +129,7 @@ new_mbuf_may_pull(struct rte_mbuf *mbuf, unsigned int len)
     return 0;
 }
 
-#define USE_HASH_3 0
+#define USE_HASH_3 1
 
 #if USE_HASH_3
 #define	MY_PRIME_VALUE	0xeaad8405

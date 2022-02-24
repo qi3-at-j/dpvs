@@ -10,9 +10,14 @@
 #include "vxlan_ctrl_priv.h"
 #include "conf/route6.h"
 #include "route6_priv.h"
-
+#include "conf/inetaddr.h"
+#include "conf/vlan.h"
+#include "inetaddr.h"
 #include "parser/flow_cmdline_parse.h"
 #include "parser/flow_cmdline.h"
+
+#include "../../l2_meter.h"
+
 
 extern struct rte_ring *g_lcores_l3_cmd_ring[RTE_MAX_LCORE]; // for cmd pthread
 
@@ -49,7 +54,12 @@ enum common_cmd_notice_type {
     NT_CLEAR_RT6_TBLS,
     NT_SET_RT6_AUTO,
     NT_DEL_RT6_AUTO,
+    NT_SET_IP4,
+    NT_SET_IP6,
+    NT_SET_VLAN,
+    NT_SET_METER,
     NT_DUMP,
+
     NT_MAX,
 };
 
@@ -69,6 +79,9 @@ struct common_cmd_notice_data {
     struct common_cmd_switch sw;
     struct dp_vs_route6_conf route6_conf;
     struct route6_ifa_entry ifa6;
+    struct inet_addr_param port_ip;
+    struct vlan_param vlan;
+    struct meter_param meter;
 };
 
 struct common_cmd_notice_entry {
@@ -139,14 +152,6 @@ static inline int common_notice_lcores(uint32_t lcore_id,
 
     if (lcore_id < RTE_MAX_LCORE) {
         if (rte_lcore_is_enabled(lcore_id) == 0) {
-            return -EINVAL;
-        }
-        
-        if (lcore_id == rte_get_main_lcore()) {
-            return -EINVAL;
-        }
-        
-        if (netif_lcore_is_fwd_worker(lcore_id) == false) {
             return -EINVAL;
         }
 

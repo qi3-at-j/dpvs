@@ -29,6 +29,30 @@ def vrrp_cfg_get(obj):
         vrrp_cfg = obj.filter('vrrp_cfg')
         if len(vrrp_cfg):
             for i in vrrp_cfg[0].children:
+                if i.name == 'vrrp_virtual_ipaddress':
+                    result['vip'] = i.value
+                    continue
+
+                if i.name == 'vrrp_virtual_ipv6':
+                    result['vip6'] = i.value
+                    continue
+
+                if i.name == 'vrrp_unicast_peer':
+                    result['peer'] = i.value
+                    continue
+
+                if i.name == 'vrrp_enable':
+                    result['status'] = i.value
+                    continue
+
+                if i.name == 'vrrp_interface':
+                    result['interface'] = i.value
+                    continue
+
+                if i.name == 'vrrp_virtual_router_id':
+                    result['vrid'] = i.value
+                    continue
+
                 result[i.name] = i.value
 
         return result

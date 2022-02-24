@@ -173,204 +173,60 @@ IPFW_SERVICE_RET_E _kpacket_zonepair_send_icmp4err(IN MBUF_S *pstMBuf)
 	return enRet;
 } */
 
-/* 获取后续分片L4层信息 */
-STATIC VOID pflt_ipv4_get_later_frag_L4Info(IN const MBUF_S *pstMBuf,
-                                            INOUT SECPOLICY_PACKET_IP4_S *pstPktInfo)
-{
-    SESSION_HANDLE hSession;
-	conn_sub_t *csp;
-	csp_key_t *pstCspKey;
-
-    hSession = (SESSION_HANDLE)MBUF_GET_CACHE(pstMBuf, MBUF_CACHE_SESSION);
-    if(SESSION_INVALID_HANDLE == hSession)
-    {
-		return;
-    }
-
-    if(IPPROTO_ICMP == pstPktInfo->ucProtocol)
-    {
-        csp = SESSION_KGetCsp(hSession, SESSION_DIR_ORIGINAL);
-        pstPktInfo->stIcmp.ucType  = csp->csp_type;
-        pstPktInfo->stIcmp.ucCode  = csp->csp_code;
-    }
-    else
-    {
-		pstCspKey = SESSION_KGetIPfsKey(hSession, SESSION_DIR_ORIGINAL);
-		pstPktInfo->usSPort  = pstCspKey->src_port;
-		pstPktInfo->usDPort  = pstCspKey->dst_port;
-    }
-
-    return;
-}
-
 /* 根据MBuf获取报文的SECPOLICY_PACKET_IP4_S数据结构 */
 STATIC VOID pflt_ipv4_get_adv_pkt_info(IN MBUF_S *pstMBuf,
-                                       IN USHORT usIPHeadOffset,
                                        INOUT SECPOLICY_PACKET_IP4_S *pstPktInfo,
                                        IN UINT uiAppID)
 {
-    UINT uiOffset;
-    UCHAR ucIPHeadLen;
-    struct iphdr *pstIp;
-    ULONG ulRet;
-	BOOL_T bFragPacket;
-    BOOL_T bValidL4;
+	conn_sub_t *csp;
+	csp_key_t *pstcspkey;
 
     DBGASSERT(NULL != pstMBuf);
 
     memset(pstPktInfo, 0, sizeof(SECPOLICY_PACKET_IP4_S));
 
     pstPktInfo->uiAppID = uiAppID;
-	
-    /* 取报文数据域的IP头 */
-    pstIp = MBUF_BTOD_OFFSET(pstMBuf, usIPHeadOffset, struct iphdr *);
 
-    /* 判断报文是否后续分片，后续分片片偏移非0 */
-    if (0 != ((ntohs(pstIp->frag_off)) & IP_OFFMASK))
-    {
-        bFragPacket = BOOL_TRUE;
-    }
-    else
-    {
-        bFragPacket = BOOL_FALSE;
-    }
+    csp = GET_CSP_FROM_LBUF(pstMBuf);
+	pstcspkey = GET_CSP_KEY(csp);
 
     /* 获取IP地址 */
-    pstPktInfo->stSrcIP.s_addr = pstIp->saddr;
-    pstPktInfo->stDstIP.s_addr = pstIp->daddr;
+    pstPktInfo->stSrcIP.s_addr = pstcspkey->src_ip;
+    pstPktInfo->stDstIP.s_addr = pstcspkey->dst_ip;
+    pstPktInfo->ucProtocol     = pstcspkey->proto;
+	pstPktInfo->uiVxlanID      = pstcspkey->token;    
 
-    pstPktInfo->ucProtocol = pstIp->protocol;
-
-    /* 获取入方向的vrf索引 
-    pstPktInfo->vrfIndex = MBUF_GET_INVPNID(pstMBuf);*/
-
-    bValidL4 = BOOL_TRUE;
-    switch(pstPktInfo->ucProtocol)
-    {
-        case IPPROTO_TCP:			
-        case IPPROTO_UDP:			
-        case IPPROTO_ICMP:
-        {
-            break;
-        }
-		
-        default:
-        {
-            /* 其他不处理 */
-            bValidL4 = BOOL_FALSE;
-            break;
-        }
-    }
-
-    /* 后续分片报文中没有4层信息 */
-    if(BOOL_TRUE == bFragPacket)
-    {
-        if(BOOL_TRUE == bValidL4)
-        {
-            pflt_ipv4_get_later_frag_L4Info(pstMBuf, pstPktInfo);
-        }
-
-        return;
-    }
-    
-    ucIPHeadLen = (UCHAR)(pstIp->ihl << 2);
-    uiOffset = usIPHeadOffset + ucIPHeadLen;
-
-    switch(pstPktInfo->ucProtocol)
-    {
-        case IPPROTO_TCP:
-        {
-            ulRet = MBUF_PULLUP(pstMBuf, uiOffset+(UINT32)sizeof(TCPHDR_S));
-            if(ERROR_SUCCESS == ulRet)
-            {
-                TCPHDR_S *pstTcp;
-
-                pstTcp = MBUF_BTOD_OFFSET(pstMBuf, uiOffset, TCPHDR_S *);
-                pstPktInfo->usSPort = pstTcp->th_sport;                
-                pstPktInfo->usDPort = pstTcp->th_dport;
-            }
-
-            break;
-        }
-        case IPPROTO_UDP:
-        {
-            ulRet = MBUF_PULLUP(pstMBuf, uiOffset+(UINT32)sizeof(UDPHDR_S));
-            if(ERROR_SUCCESS == ulRet)
-            {
-                UDPHDR_S *pstUdp;
-
-                pstUdp = MBUF_BTOD_OFFSET(pstMBuf, uiOffset, UDPHDR_S *);
-                pstPktInfo->usSPort = pstUdp->uh_sport;                
-                pstPktInfo->usDPort = pstUdp->uh_dport;
-            }
-
-            break;
-        }
-        case IPPROTO_ICMP:
-        {
-            /* 由于仅需要type和code字段信息，此处仅MBUF_PULLUP(uiOffSet+2)个字节 */
-            ulRet = MBUF_PULLUP(pstMBuf, uiOffset+2);
-            if(ERROR_SUCCESS == ulRet)
-            {
-                ICMP_S *pstIcmp;
-
-                pstIcmp = MBUF_BTOD_OFFSET(pstMBuf, uiOffset, ICMP_S *);
-                pstPktInfo->stIcmp.ucType = pstIcmp->icmp_type;
-                pstPktInfo->stIcmp.ucCode = pstIcmp->icmp_code;
-            }
-
-            break;
-        }
-		
-        default:
-        {
-            /* 其他不处理 */
-            break;
-        }
-    }
+	switch (pstPktInfo->ucProtocol)
+	{
+		case IPPROTO_TCP:
+		case IPPROTO_UDP:
+		{
+			pstPktInfo->usDPort = pstcspkey->dst_port;
+			pstPktInfo->usSPort = pstcspkey->src_port;
+			break;
+		}
+		case IPPROTO_ICMP:
+		{
+			pstPktInfo->stIcmp.ucType = csp->csp_type;
+			pstPktInfo->stIcmp.ucCode = csp->csp_code;
+			break;
+		}
+		default:
+		{
+			break;
+		}
+	}
 
     return;
 }
 
 STATIC SECPOLICY_ACTION_E pflt_ip4_packet_match_zonepair_policy(IN MBUF_S *pstMBuf,
-                                                                IN USHORT usIPOff,
-																IN SESSION_S *pstSession,
 																IN UINT uiAppID)
 {
 	SECPOLICY_PACKET_IP4_S stSecPolicyPacketIP4;
-	conn_sub_t *csp;
-	csp_key_t *pstcspkey;
 	SECPOLICY_ACTION_E enAction;  
 	
-	pflt_ipv4_get_adv_pkt_info(pstMBuf, usIPOff, &stSecPolicyPacketIP4, uiAppID);
-	if (NULL != pstSession)
-	{	
-		csp       = SESSION_KGetCsp((SESSION_HANDLE)pstSession, SESSION_DIR_ORIGINAL);
-	    pstcspkey = &csp->key;
-		stSecPolicyPacketIP4.ucProtocol     = pstcspkey->proto;
-		stSecPolicyPacketIP4.stDstIP.s_addr = pstcspkey->dst_ip;
-		stSecPolicyPacketIP4.stSrcIP.s_addr = pstcspkey->src_ip;
-		switch (stSecPolicyPacketIP4.ucProtocol)
-		{
-			case IPPROTO_TCP:
-			case IPPROTO_UDP:
-			{
-				stSecPolicyPacketIP4.usDPort = pstcspkey->dst_port;
-				stSecPolicyPacketIP4.usSPort = pstcspkey->src_port;
-				break;
-			}
-			case IPPROTO_ICMP:
-			{
-				stSecPolicyPacketIP4.stIcmp.ucType = csp->csp_type;
-				stSecPolicyPacketIP4.stIcmp.ucCode = csp->csp_code;
-				break;
-			}
-			default:
-			{
-				break;
-			}
-		}
-	}
+	pflt_ipv4_get_adv_pkt_info(pstMBuf, &stSecPolicyPacketIP4, uiAppID);	
 	
 	enAction = SecPolicy_Match_IP4(&stSecPolicyPacketIP4);
 
@@ -383,7 +239,6 @@ STATIC IPFW_SERVICE_RET_E PFLT_PacketIPv4ZonePairNormalProc(IN USHORT usIPOff,
 {
 	IPFW_SERVICE_RET_E enRet = PKT_CONTINUE;
 	SESSION_S *pstSession = (SESSION_S*)hSession;
-	SESSION_S *pstIcmpSession = NULL;
 	SECPOLICY_ACTION_E enAction;  
 	APR_PARA_S stAprPara;
 	BOOL_T bNeedApr;	
@@ -392,16 +247,6 @@ STATIC IPFW_SERVICE_RET_E PFLT_PacketIPv4ZonePairNormalProc(IN USHORT usIPOff,
 	struct in_addr stSrcIP;
     struct in_addr stDstIP;
 	UINT uiVrf;
-		
-
-
-	/* 目前差错报文转发那边直接放行或丢弃了，不会进到fw处理，此处逻辑可以先注释掉*/
-	#if 0
-	if (unlikely(SESSION_MBUF_TEST_FLAG(pstMBuf, SESSION_MBUF_ICMPERR)))
-	{
-		pstIcmpSession = pstSession;
-	}
-	#endif
 
 	if (NULL != pstSession)
 	{	
@@ -448,7 +293,7 @@ STATIC IPFW_SERVICE_RET_E PFLT_PacketIPv4ZonePairNormalProc(IN USHORT usIPOff,
 		stAprPara.uiAppID = APR_ID_INVALID;
 	}
 	
-	enAction = pflt_ip4_packet_match_zonepair_policy(pstMBuf, usIPOff, pstIcmpSession, stAprPara.uiAppID);
+	enAction = pflt_ip4_packet_match_zonepair_policy(pstMBuf, stAprPara.uiAppID);
 	if (SECPOLICY_ACTION_DENY == enAction)	
 	{
 		enRet = PKT_DROPPED;
@@ -841,6 +686,7 @@ STATIC VOID _kpacket_zonepair_filter_get_matchinfo_Ipv4(IN SESSION_HANDLE hSessi
 	usDstPort = pstcspkey->dst_port;
 	ucProtocol = pstcspkey->proto;
 
+	pstSecPolicyPacketIP4->uiVxlanID  = pstcspkey->token;
 	pstSecPolicyPacketIP4->ucProtocol = ucProtocol;
 	pstSecPolicyPacketIP4->stSrcIP.s_addr = stSrcIP.s_addr;
 	pstSecPolicyPacketIP4->stDstIP.s_addr = stDstIP.s_addr;
@@ -1438,17 +1284,11 @@ VOID ASPF_Init(VOID)
 
 /* 根据MBuf获取报文的SECPOLICY_PACKET_IP6_S数据结构 */
 STATIC VOID pflt_ipv6_get_adv_pkt_info(IN MBUF_S *pstMBuf,
-                                IN USHORT usIPHeadOffset,
                                 INOUT SECPOLICY_PACKET_IP6_EX_S *pstPktInfo,
                                 IN UINT uiAppID)
 {
-	struct ip6_ext *pstExtHdr;	
-    IP6_S *pstIP6;
-	UCHAR ucNxtHdr;
-	UINT uiOptHdrLen;
-	UINT uiTotLen;
-	UINT uiLenTraversed;
-    ULONG ulRet = ERROR_SUCCESS;
+	conn_sub_t *csp;
+	csp_key_t *pstcspkey;
 
     DBGASSERT(NULL != pstMBuf);	
     DBGASSERT(NULL != pstPktInfo);
@@ -1457,113 +1297,44 @@ STATIC VOID pflt_ipv6_get_adv_pkt_info(IN MBUF_S *pstMBuf,
 
 	pstPktInfo->stPolicy.uiAppID = uiAppID;
 
-    pstIP6 = MBUF_BTOD_OFFSET(pstMBuf, usIPHeadOffset, IP6_S *);
-
-	uiTotLen = ntohs(pstIP6->ip6_usPLen);
-
-	/* 获取源目的地址 */
-	IN6ADDR_Copy(&(pstPktInfo->stPolicy.stSrcIP6), &(pstIP6->stIp6Src));
-	IN6ADDR_Copy(&(pstPktInfo->stPolicy.stDstIP6), &(pstIP6->stIp6Dst));
-
-	uiLenTraversed = (UINT)sizeof(IP6_S)+ usIPHeadOffset;
-
-	ucNxtHdr = pstIP6->ip6_ucNxtHdr;
-
-	/* 当前报文没有ip6_ext */
-	if((IPPROTO_NONE == ucNxtHdr) ||
-	   (IPPROTO_ESP == ucNxtHdr)  ||
-	   (IPPROTO_AH == ucNxtHdr))
+	csp = GET_CSP_FROM_LBUF(pstMBuf);
+	pstcspkey = GET_CSP_KEY(csp);
+	
+	pstPktInfo->stPolicy.uiVxlanID  = pstcspkey->token;	
+	pstPktInfo->stPolicy.ucProtocol = pstcspkey->proto;	
+    memcpy(&pstPktInfo->stPolicy.stSrcIP6, &(pstcspkey->src_ip), sizeof(struct in6_addr));
+    memcpy(&pstPktInfo->stPolicy.stDstIP6, &(pstcspkey->dst_ip), sizeof(struct in6_addr));
+	switch (pstPktInfo->stPolicy.ucProtocol)
 	{
-		/* 加密报文，不进行扩展头解析 */
-	    pstPktInfo->stPolicy.ucProtocol = ucNxtHdr;
-		uiTotLen = 0;
-    }
-	   
-    /* 长度还够并且上一个没有读取错误，则继续一直到option读完 */
-	while(uiTotLen > (UINT)sizeof(struct ip6_ext))
-	{
-		/* 根据option的协议获取option头中的信息，并填写到pstPktInfo中 */
-	    ulRet = g_apfGetOptHdrFunc[ucNxtHdr](pstMBuf, uiLenTraversed, ucNxtHdr, pstPktInfo);
-		if(ERROR_SUCCESS != ulRet)
+		case IPPROTO_TCP:
+		case IPPROTO_UDP:
+		{
+			pstPktInfo->stPolicy.usDPort = pstcspkey->dst_port;
+			pstPktInfo->stPolicy.usSPort = pstcspkey->src_port;
+			break;
+		}
+		case IPPROTO_ICMPV6:
+		{
+			pstPktInfo->stPolicy.stIcmp.ucType = csp->csp_type;
+			pstPktInfo->stPolicy.stIcmp.ucCode = csp->csp_code;
+			break;
+		}
+		default:
 		{
 			break;
 		}
-
-		if(BOOL_TRUE != _session6_KOptionHasNxtHdr(ucNxtHdr))
-		{
-			break;
-		}
-
-		/* 计算当前头的信息准备读下一个option */
-		pstExtHdr = IP6_GetExtHdr(pstMBuf, uiLenTraversed, (UINT)sizeof(struct ip6_ext));
-
-		DBGASSERT(NULL != pstExtHdr);
-
-		ucNxtHdr = pstExtHdr->ip6e_nxt;
-
-		/* 没有下一个ip6_ext */
-		if((IPPROTO_NONE == ucNxtHdr) ||
-		   (IPPROTO_ESP  == ucNxtHdr) ||
-		   (IPPROTO_AH   == ucNxtHdr))
-		{
-	        /* 加密报文，不进行扩展头解析 */
-		    pstPktInfo->stPolicy.ucProtocol = ucNxtHdr;
-			break;
-	    }
-
-	    uiOptHdrLen = _session6_KGetOptionLength(pstExtHdr);
-		uiLenTraversed += uiOptHdrLen;
-		uiTotLen -= uiOptHdrLen;
-
-		/* 整个payload读完时，则结束 */
-		if(uiLenTraversed >= MBUF_GET_TOTALDATASIZE(pstMBuf))
-		{
-			break;
-		}		
-	}
+	}	
  
     return;
 }
 
 STATIC SECPOLICY_ACTION_E pflt_ip6_packet_match_zonepair_policy(IN MBUF_S *pstMBuf,
-                                                                IN USHORT usIPOff,
-																IN SESSION_S *pstSession,
 																IN UINT uiAppID)
 {
 	SECPOLICY_PACKET_IP6_EX_S stSecPolicyPacketIP6;
-	conn_sub_t *csp;
-	csp_key_t *pstcspkey;
 	SECPOLICY_ACTION_E enAction;  
 	
-	pflt_ipv6_get_adv_pkt_info(pstMBuf, usIPOff, &stSecPolicyPacketIP6, uiAppID);
-	if (NULL != pstSession)
-	{
-	    csp       = SESSION_KGetCsp((SESSION_HANDLE)pstSession, SESSION_DIR_ORIGINAL);
-	    pstcspkey = &csp->key;
-		stSecPolicyPacketIP6.stPolicy.ucProtocol = pstcspkey->proto;
-        memcpy(&stSecPolicyPacketIP6.stPolicy.stDstIP6, &(pstcspkey->src_ip), sizeof(struct in6_addr));
-        memcpy(&stSecPolicyPacketIP6.stPolicy.stSrcIP6, &(pstcspkey->dst_ip), sizeof(struct in6_addr));
-		switch (stSecPolicyPacketIP6.stPolicy.ucProtocol)
-		{
-			case IPPROTO_TCP:
-			case IPPROTO_UDP:
-			{
-				stSecPolicyPacketIP6.stPolicy.usDPort = pstcspkey->dst_port;
-				stSecPolicyPacketIP6.stPolicy.usSPort = pstcspkey->src_port;
-				break;
-			}
-			case IPPROTO_ICMPV6:
-			{
-				stSecPolicyPacketIP6.stPolicy.stIcmp.ucType = csp->csp_type;
-				stSecPolicyPacketIP6.stPolicy.stIcmp.ucCode = csp->csp_code;
-				break;
-			}
-			default:
-			{
-				break;
-			}
-		}
-	}
+	pflt_ipv6_get_adv_pkt_info(pstMBuf, &stSecPolicyPacketIP6, uiAppID);	
 	
 	enAction = SecPolicy_Match_IP6(&stSecPolicyPacketIP6.stPolicy);
 
@@ -1576,7 +1347,6 @@ STATIC IPFW_SERVICE_RET_E PFLT_PacketIPv6ZonePairNormalProc(IN USHORT usIPOff,
 {
 	IPFW_SERVICE_RET_E enRet = PKT_CONTINUE;
 	SESSION_S *pstSession = (SESSION_S*)hSession;
-	SESSION_S *pstIcmpSession = NULL;
 	SECPOLICY_ACTION_E enAction; 
 	APR_PARA_S stAprPara;
 	BOOL_T bNeedApr;	
@@ -1585,14 +1355,6 @@ STATIC IPFW_SERVICE_RET_E PFLT_PacketIPv6ZonePairNormalProc(IN USHORT usIPOff,
 	struct in6_addr stSrcIP6;
     struct in6_addr stDstIP6;
 	UINT uiVrf;
-
-	/* 目前差错报文转发那边直接放行或丢弃了，不会进到fw处理，此处逻辑可以先注释掉*/
-	#if 0
-	if (unlikely(SESSION_MBUF_TEST_FLAG(pstMBuf, SESSION_MBUF_ICMPERR)))
-	{
-		pstIcmpSession = pstSession;
-	}
-	#endif
 	
 	if (NULL != pstSession)
 	{	
@@ -1639,7 +1401,7 @@ STATIC IPFW_SERVICE_RET_E PFLT_PacketIPv6ZonePairNormalProc(IN USHORT usIPOff,
 		stAprPara.uiAppID = APR_ID_INVALID;
 	}
 	
-	enAction = pflt_ip6_packet_match_zonepair_policy(pstMBuf, usIPOff, pstIcmpSession, stAprPara.uiAppID);
+	enAction = pflt_ip6_packet_match_zonepair_policy(pstMBuf, stAprPara.uiAppID);
 	
 	/* DENY的报文不建快转 */
 	if (SECPOLICY_ACTION_DENY == enAction)	
@@ -1876,7 +1638,8 @@ STATIC VOID _kpacket_zonepair_filter_get_matchinfo_Ipv6(IN SESSION_HANDLE hSessi
 
 	csp = SESSION_KGetCsp(hSession, SESSION_DIR_ORIGINAL);
 	pstcspkey = &(csp->key);
-	
+
+	pstSecPolicyPacketIP6->uiVxlanID = pstcspkey->token;
 	ucProtocol = pstSecPolicyPacketIP6->ucProtocol = pstcspkey->proto;
 	memcpy(&pstSecPolicyPacketIP6->stSrcIP6, &(pstcspkey->src_ip), sizeof(struct in6_addr));
 	memcpy(&pstSecPolicyPacketIP6->stDstIP6, &(pstcspkey->dst_ip), sizeof(struct in6_addr));

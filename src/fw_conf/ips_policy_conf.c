@@ -54,12 +54,12 @@ static void ips_action_handler(vector_t tokens)
     return;
 }
 
-static void ips_cfg_in_handler(vector_t tokens)
+static void dpi_cfg_in_handler(vector_t tokens)
 {
     return;
 }
 
-static void ips_vpatch_handler(vector_t tokens)
+static void dpi_vpatch_handler(vector_t tokens)
 {
     char *str = set_value(tokens);
 
@@ -78,7 +78,7 @@ static void ips_vpatch_handler(vector_t tokens)
     return;
 }
 
-static void ips_runmode_handler(vector_t tokens)
+static void dpi_runmode_handler(vector_t tokens)
 {
     char *str = set_value(tokens);
 
@@ -810,10 +810,10 @@ int dpi_get_trace_switch(void)
 
 void install_ips_policy_keywords(void)
 {
-    install_keyword("ips_cfg", ips_cfg_in_handler, KW_TYPE_NORMAL);
+    install_keyword("dpi_cfg", dpi_cfg_in_handler, KW_TYPE_NORMAL);
     install_sublevel();
-    install_keyword("vpatch", ips_vpatch_handler, KW_TYPE_NORMAL);
-    install_keyword("runmode", ips_runmode_handler, KW_TYPE_NORMAL);
+    install_keyword("vpatch", dpi_vpatch_handler, KW_TYPE_NORMAL);
+    install_keyword("runmode", dpi_runmode_handler, KW_TYPE_NORMAL);
     install_sublevel_end();
 
     install_keyword("ips_policy", ips_policy_in_handler, KW_TYPE_NORMAL);

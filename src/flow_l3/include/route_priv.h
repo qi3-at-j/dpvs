@@ -84,23 +84,25 @@ struct route_table {
     uint32_t table_id;//for vrf
 };
 
-#if 0
-static inline void route4_put(struct route_entry *route)
+static inline void graph_route4_put(struct route_entry *route)
 {
-    if (route) {
+    if (likely(route)) {
         if (rte_atomic32_dec_and_test(&route->refcnt)) {
+#ifdef ROUTE_USE_MEMPOOL
+            rte_mempool_put(route->mp, route);
+#else
             rte_free((void *)route);
+#endif
         }
     }
 }
 
-static inline void route4_get(struct route_entry *route)
+static inline void graph_route4_get(struct route_entry *route)
 {
-    if (route) {
+    if (likely(route)) {
         rte_atomic32_inc(&route->refcnt);
     }
 }
-#endif
 
 int new_route_init(void *arg);
 int new_route_add(void *arg);

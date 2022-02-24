@@ -187,7 +187,7 @@ ip4_rcv_node_init(const struct rte_graph *graph,
     			return -rte_errno;
             }
         }
-
+        api_deq_l3_cmd_ring(NULL);
 		init_once = 1;
 	}
 

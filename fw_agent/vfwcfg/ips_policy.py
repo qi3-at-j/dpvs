@@ -68,18 +68,18 @@ def ips_cfg_set(obj, vrf, **kw):
     try:
         s = obj.filter('vrf_index', vrf)
         if len(s):
-            cfg = s[0].filter('ips_cfg')
+            cfg = s[0].filter('dpi_cfg')
             if len(cfg):
                 for k,v in kw.items():
                     i = cfg[0].filter('', k)
                     if len(i):
                         if i[0].value != v:
-                            output.info('vrf {} ips_cfg {} {} -> {}'.format(vrf, k, i[0].value, v))
+                            output.info('vrf {} dpi_cfg {} {} -> {}'.format(vrf, k, i[0].value, v))
                             i[0].value = v
                     else:
                         j = Key(k,v)
                         cfg[0].add(j)
-                        output.info('vrf {} ips_cfg {} none -> {}'.format(vrf, k, v))
+                        output.info('vrf {} dpi_cfg {} none -> {}'.format(vrf, k, v))
     except Exception as e:
         output.exception(e)
 
@@ -90,7 +90,7 @@ def ips_cfg_get(obj, vrf):
 
         s = obj.filter('vrf_index', vrf)
         if len(s):
-            cfg = s[0].filter('ips_cfg')
+            cfg = s[0].filter('dpi_cfg')
             if len(cfg):
                 for i in cfg[0].children:
                     result[vrf][i.name] = i.value

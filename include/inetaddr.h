@@ -25,6 +25,8 @@
 #include "timer.h"
 #include "dpdk.h"
 #include "list.h"
+#include "parser/flow_cmdline_parse.h"
+#include "conf/inetaddr.h"
 
 struct inet_device {
     struct netif_port   *dev;
@@ -121,5 +123,8 @@ int idev_add_mcast_init(void *args);
 
 int inet_addr_init(void);
 int inet_addr_term(void);
+
+int add_netif_addr(struct inet_addr_param *param, cmd_blk_t *cbt);
+int inet_pton_try(int *af, const char *src, union inet_addr *dst);
 
 #endif /* __DPVS_INETADDR__ */

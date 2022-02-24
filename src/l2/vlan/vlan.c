@@ -556,7 +556,36 @@ static int vlan_sockopt_set(sockoptid_t opt, const void *conf, size_t size)
     }
 }
 
+int vlan_conf_recover(struct vlan_param *param){
 
+    char *vlan_sub_name = param->ifname;
+    char *real_dev_name = param->real_dev;
+    struct netif_port *real_dev = NULL, *dev;
+    int err;
+
+    if(!strlen(vlan_sub_name) || !strlen(real_dev_name)){
+		printf("vlan_conf_recover : invail name \n");
+		return EDPVS_INVAL;
+	}
+
+    real_dev = netif_port_get_by_name(real_dev_name);
+	if (!real_dev) {
+		printf("no such real device \n");
+        return EDPVS_NODEV;
+    }
+
+    if (!vlan_id_valid(htons(param->vlan_id))) {
+		printf( "invlid vlan ID \n");
+		return EDPVS_INVAL;
+	}
+
+    err =  vlan_add_dev(real_dev, vlan_sub_name, htons(param->vlan_proto), htons(param->vlan_id));
+    if(err != EDPVS_OK){
+			printf( "vlan_del_dev failed, err = %d \n", err);
+    }
+
+    return err;
+}
 static int
 set_vlan_add_cli(cmd_blk_t *param){
 	struct netif_port *real_dev = NULL, *dev;

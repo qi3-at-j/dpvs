@@ -13,6 +13,8 @@
 #define SURI_ACTION_PASS         0x20
 #define SURI_ACTION_CONFIG       0x40
 
+#define TEST_ACTION(ret, a)     (ret & a)
+
 enum PktServiceTypeEnum {
     PKT_SERVICE_TYPE_APR,
     PKT_SERVICE_TYPE_IPS,
@@ -40,6 +42,7 @@ typedef struct tagDpiPkt
     UINT32 uiAction;
     UINT32 uiAppID;
     UINT32 uiGrpID;        /*group id = 1 need apr check continue*/
+    UINT32 uiRuleID;
     UCHAR *pucPktBuf;
 }DPI_PKT_S;
 
@@ -56,6 +59,7 @@ typedef struct tagDpiPara
     UINT32 uiTrustValue;
     UINT32 uiDirect;
     UINT32 uiAction;
+    UINT32 uiRuleID;
 }DPI_PARA_S;
 
 typedef struct tagAprPara
@@ -68,6 +72,7 @@ typedef struct tagIpsPara
 {
     UINT32 uiDirect;
     UINT32 uiAction;
+    UINT32 uiRuleID;
 }IPS_PARA_S;
 
 VOID DPI_Init(VOID);

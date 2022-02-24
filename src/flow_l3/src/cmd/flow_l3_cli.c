@@ -7,8 +7,11 @@
 #include "flow_l3_cli_priv.h"
 #include "common_cli_priv.h"
 #include "switch_cli_priv.h"
+#include "parser/flow_cmdline_parse.h"
+#include "parser/flow_cmdline.h"
 
 #include "notifier.h"
+#include "vlan.h"
 
 #define CMD_RING_SIZE 64
 
@@ -275,7 +278,10 @@ static int deal_l3_cmd(void *arg)
     struct vrf_map_elem vrf_node;
     struct common_cmd_notice_entry *cmd_notice_entry =
         (struct common_cmd_notice_entry *)arg;
-
+    cmd_blk_t cbt;
+    struct cmdline cl;
+    cbt.cl = &cl;
+    cbt.cl->s_out = 1;
     if (cmd_notice_entry->lcore_id == rte_lcore_id()) {
         //if (likely(graph)) {
             //rte_rwlock_read_lock(&cmd_notice_entry->rwlock);
@@ -489,6 +495,39 @@ static int deal_l3_cmd(void *arg)
                 case NT_DUMP:
                     cmd_notice_entry->dump(cmd_notice_entry->cbt,
                         cmd_notice_entry->lcore_id, cmd_notice_entry->table_id);
+                    break;
+                case NT_SET_IP4:
+                case NT_SET_IP6:
+                        cbt.mode = MODE_DO;
+                        if(ret = add_netif_addr(&cmd_notice_entry->data.port_ip, &cbt)){
+                            printf("del ip recover err %d\n", ret);
+                        }
+                        struct inet_ifaddr ifa;
+                        struct inet_device idev;
+                        ifa.idev = &idev;
+
+                        if (cmd_notice_entry->data.port_ip.ifa_entry.af == AF_INET){
+                            ifa.addr = cmd_notice_entry->data.port_ip.ifa_entry.addr;
+                            ifa.bcast = cmd_notice_entry->data.port_ip.ifa_entry.bcast;
+                            ifa.plen = cmd_notice_entry->data.port_ip.ifa_entry.plen;
+                            ifa.idev->dev = netif_port_get_by_name(cmd_notice_entry->data.port_ip.ifa_entry.ifname);
+                            route_add_ifaddr(&ifa);
+                        }else{
+                            route_add_ifaddr_v6(&cmd_notice_entry->data.port_ip);
+                        } 
+                    break;
+                case NT_SET_VLAN:
+                    {
+                        if(ret = vlan_conf_recover(&cmd_notice_entry->data.vlan)){
+                            printf("del vlan recover err %d\n", ret);
+                        }
+                    }
+                    break;
+                case NT_SET_METER:
+                    {
+                        if(ret = proc_auto_meter_recover(cmd_notice_entry->data.meter.szTenantID, 
+                                      cmd_notice_entry->data.meter.bandwith));
+                    }
                     break;
                 default:
                     printf("unknown cmd type:%u\n", cmd_notice_entry->type);

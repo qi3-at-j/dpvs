@@ -55,6 +55,7 @@
 #include "flow_fwd.h"
 #include "l3_node_priv.h"
 #include "route6_priv.h"
+#include "route_priv.h"
 
 /*Head/hdr is never need to be protected since we make it per lcore*/
 /*other wants to use it need to be careful, maybe add a new lock version?*/
@@ -134,7 +135,7 @@ init_conn_sub (conn_sub_t *csp)
         if (csp->cspflag & CSP_FLAG_IPV6) {
             graph_route6_put((struct route6_entry *)csp->route);
         } else {
-            route4_put((struct route_entry *)csp->route);
+            graph_route4_put((struct route_entry *)csp->route);
         }
     }
 	memset((void*)&csp->start,0,sizeof(conn_sub_t)-offsetof(conn_sub_t, start));
@@ -357,11 +358,21 @@ set_fcp_invalid(flow_connection_t *fcp, uint32_t reason)
 {
     flow_debug_trace(FLOW_DEBUG_AGER, "%s: fcp: %d, reason: %d\n", 
                      __FUNCTION__, fcp2id(fcp), reason);
+    fcp_rwl_write_lock(fcp);
+    if (fcp->fcflag & FC_INVALID) {
+        flow_debug_trace(FLOW_DEBUG_AGER, "  fcp is already invalid\n");
+        fcp_rwl_write_unlock(fcp);
+        return;
+    } else {
+        fcp->fcflag |= FC_INVALID;
+    }
+    fcp_rwl_write_unlock(fcp);
 
-    /* free the flow connection in 2 seconds */
-    update_fcp_in_ager(fcp, 1);
+    /* if not taken over by session, free the flow connection in 2 seconds */
+    if (!(fcp->fcflag & FC_TIME_NO_REFRESH)) {
+        update_fcp_in_ager(fcp, 1);
+    }
 
-    fcp->fcflag |= FC_INVALID;
     rte_atomic32_inc(&this_flow_invalid_conn);
     fcp->reason = reason;
     fcp->duration = (rte_get_tsc_cycles()-fcp->start_time)/g_cycles_per_sec;
@@ -376,6 +387,12 @@ set_fcp_invalid(flow_connection_t *fcp, uint32_t reason)
             del_from_conn_hash(&fcp->conn_sub1);
         }
     }
+}
+
+void
+set_fcp_deny(flow_connection_t *fcp)
+{
+    fcp->fcflag |= FC_DENY;
 }
 
 static int is_flow_conn_init_log  = 1;
@@ -414,7 +431,14 @@ flow_ager_service(__rte_unused struct rte_timer *tim, __rte_unused void *arg)
         return;
     }
 
+    cid = rte_atomic32_read(&this_flow_conn_ager_ctx.work);
+    if (cid != 0) {
+        flow_debug_trace(FLOW_DEBUG_AGER, "%s: ager is running on %d\n",
+                         __FUNCTION__, cid);
+        return;
+    }
     cid = rte_lcore_id(); 
+    rte_atomic32_set(&this_flow_conn_ager_ctx.work, cid);
     rte_atomic32_set(&this_flow_conn_ager_ctx.cid, cid);
     index = &(this_flow_conn_ager_ctx.index);
     flow_debug_trace(FLOW_DEBUG_AGER, "%s: start ager %d on %d\n", 
@@ -442,6 +466,7 @@ flow_ager_service(__rte_unused struct rte_timer *tim, __rte_unused void *arg)
     if (*index >= FLOW_CONN_MAXTIMEOUT) {
         *index = 0;
     }
+    rte_atomic32_clear(&this_flow_conn_ager_ctx.work);
     flow_debug_trace(FLOW_DEBUG_AGER, "ager finish invalid/free %d/%d, next %d\n", 
                      invalid, free, *index);
 }
@@ -923,7 +948,7 @@ flow_proc_first_pak(struct rte_mbuf *mbuf)
             if (csp->cspflag & CSP_FLAG_IPV6) {
                 graph_route6_put((struct route6_entry *)csp->route);
             } else {
-                route4_put((struct route_entry *)csp->route);
+                graph_route4_put((struct route_entry *)csp->route);
             }
             csp->route = 0;
         }
@@ -932,7 +957,7 @@ flow_proc_first_pak(struct rte_mbuf *mbuf)
             if (csp->cspflag & CSP_FLAG_IPV6) {
                 graph_route6_put((struct route6_entry *)csp->route);
             } else {
-                route4_put((struct route_entry *)csp->route);
+                graph_route4_put((struct route_entry *)csp->route);
             }
             csp->route = 0;
         }
@@ -1125,7 +1150,11 @@ flow_find_connection(struct rte_mbuf *mbuf)
     if (fcp) {
         flow_print_basic("  existing connection found. id %d\n", fcp2id(fcp));
         SET_CSP_TO_MBUF(mbuf, csp);
-        if (IS_CSP_DISABLE(csp)) {
+        if (fcp->fcflag & FC_DENY) {
+            flow_print_basic("  flow deny connection. drop the packet\n");
+            this_flow_counter[FLOW_ERR_FCP_DENY].counter++;
+            return -1;
+        } else if (IS_CSP_DISABLE(csp)) {
             /* do something */
         }
     } else {
@@ -1148,6 +1177,9 @@ flow_find_connection(struct rte_mbuf *mbuf)
         /* restor vector list */
         flow_set_pak_vector(vector);
         if (rc) {
+            if (rc == FLOW_RET_DENY) {
+                flow_first_install_connection(mbuf);
+            }
             return rc;
         }
 
@@ -1370,7 +1402,7 @@ flow_first_routing(struct rte_mbuf *mbuf)
     peer = csp2peer(csp);
     peer->route = rt;
 #ifndef TYFLOW_LEGACY
-    route4_get(rt);
+    graph_route4_get(rt);
 #endif
     peer->ifp = rt->port;
 
@@ -1858,7 +1890,7 @@ flow_fast_check_routing(struct rte_mbuf *mbuf)
 #endif
     if (peer->route != (void *)rt) {
         if (peer->route) {
-            route4_put(peer->route);
+            graph_route4_put(peer->route);
             peer->cspflag |= CSP_IFP_UPDATE;
             flow_print_basic("  csp update the ifp %s->%s\n", 
                        (peer->ifp)?peer->ifp->name:"uncertain", 
@@ -1867,7 +1899,7 @@ flow_fast_check_routing(struct rte_mbuf *mbuf)
 
         peer->route = (void *)rt;
 #ifndef TYFLOW_LEGACY
-        route4_get(rt);
+        graph_route4_get(rt);
 #endif
         peer->ifp = rt->port;
     }
@@ -1885,7 +1917,7 @@ flow_fast_check_routing(struct rte_mbuf *mbuf)
     } else {
         /* we are going to find a new valid route, put the old one if any */
         if (peer->route)
-            route4_put(peer->route);
+            graph_route4_put(peer->route);
 #ifndef TYFLOW_LEGACY
         rt = flow_route_lookup(mbuf, peer->csp_src_ip);
 #else

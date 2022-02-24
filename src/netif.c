@@ -27,6 +27,7 @@
 #include <linux/rtnetlink.h>
 #include <net/if.h>
 #include "dpdk.h"
+#include "ifstat.h"
 #include "conf/common.h"
 #include "netif.h"
 #include "netif_addr.h"
@@ -3994,6 +3995,7 @@ int netif_get_link(struct netif_port *dev, struct rte_eth_link *link)
     return EDPVS_OK;
 }
 
+
 int netif_get_promisc(struct netif_port *dev, bool *promisc)
 {
     assert(dev && dev->netif_ops && promisc);
@@ -5377,7 +5379,7 @@ int get_port_basic(struct netif_port *port, void **out, size_t *out_len)
     if (unlikely(!get))
         return EDPVS_NOMEM;
 
-    err = netif_get_link(port, &link);
+    err = ifstate_get_link(port, &link);
     if (err != EDPVS_OK) {
         rte_free(get);
         return err;

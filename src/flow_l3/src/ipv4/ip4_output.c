@@ -95,9 +95,9 @@ ip4_output(struct rte_graph *graph,
                     iph->hdr_checksum = 0;
                     iph->hdr_checksum = rte_ipv4_cksum(iph);
                 }
-                route4_get(route_node);
+                graph_route4_get(route_node);
             }
-            route4_put(route_node);
+            graph_route4_put(route_node);
             rte_node_enqueue(graph, node, next_id, (void **)pkts_frag_out, frag_nb);
         }
 

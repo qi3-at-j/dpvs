@@ -15,6 +15,12 @@
 #define NEIGH_HASHED     0x01
 #define NEIGH_STATIC     0x02
 
+#ifndef TYFLOW_LEGACY
+#ifndef FLOW_L3_DONT_USE_MEMPOOL
+#define NEIGH_USE_MEMPOOL
+#endif
+#endif
+
 struct neigh_entry {
     struct hlist_node hnode;
     union inet_addr   next_hop;
@@ -28,6 +34,9 @@ struct neigh_entry {
     uint32_t            state;
     uint32_t            ts;
     uint8_t             flag;
+#ifdef NEIGH_USE_MEMPOOL
+    struct rte_mempool *mp;
+#endif
 } __rte_cache_aligned;
 
 struct neigh_table { 

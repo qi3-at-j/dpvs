@@ -10,14 +10,21 @@
 #include "arp_priv.h"
 #include "ndisc.h"
 #include "vrrp_send_priv.h"
+#include "flow_l3_cfg_init_priv.h"
 
 struct neigh_table *g_lcores_neigh_tables_p[RTE_MAX_LCORE];
+extern struct conf_tbl_entry_size g_conf_tbl_entry_size;
 
 #define this_lcore_neigh_tables_p      (RTE_PER_LCORE(neigh_table_lcore))
 #define this_lcore_socket_id        (RTE_PER_LCORE(socket_id_lcore))
 
 static RTE_DEFINE_PER_LCORE(struct neigh_table *, neigh_table_lcore);
 static RTE_DEFINE_PER_LCORE(uint32_t, socket_id_lcore);
+
+#ifdef NEIGH_USE_MEMPOOL
+#define this_lcore_neigh_mempool_p      (RTE_PER_LCORE(neigh_mempool_lcore))
+static RTE_DEFINE_PER_LCORE(struct rte_mempool *, neigh_mempool_lcore);
+#endif
 
 #define NEIGH_ENTRY_SIZE_DEF 128
 #define NODE_NEIGH_TIMEOUT_DEF 60
@@ -61,19 +68,32 @@ static struct neigh_entry *neigh_new_entry(struct neigh_entry *neigh_node)
         return NULL;
     }
 
-    new_neigh_node = (struct neigh_entry *)rte_zmalloc_socket("new_neigh_entry", 
-        sizeof(struct neigh_entry), RTE_CACHE_LINE_SIZE, this_lcore_socket_id);
-    if (unlikely(new_neigh_node == NULL)) {
-        return NULL;
-    }
+#ifdef NEIGH_USE_MEMPOOL
+        if (unlikely(rte_mempool_get(this_lcore_neigh_mempool_p, (void **)&new_neigh_node)))
+            return NULL;
+#else
+        new_neigh_node = (struct neigh_entry *)rte_zmalloc_socket("new_neigh_entry", 
+            sizeof(struct neigh_entry), RTE_CACHE_LINE_SIZE, this_lcore_socket_id);
+        if (unlikely(new_neigh_node == NULL)) {
+            return NULL;
+        }
+#endif
 
     *new_neigh_node = *neigh_node;
+
+#ifdef NEIGH_USE_MEMPOOL
+    new_neigh_node->mp = this_lcore_neigh_mempool_p;
+#endif
+
     return new_neigh_node;
 }
 
 struct neigh_entry *
 neigh_lookup(uint32_t table_id, int af, union inet_addr *next_hop)
 {
+    if (unlikely(table_id >= MAX_ROUTE_TBLS))
+        return NULL;
+
     uint32_t hashkey;
     struct neigh_entry *neigh_node;
 
@@ -96,6 +116,9 @@ int arp_neigh_add_ht(struct neigh_entry *neigh_node)
         return -EINVAL;
     }
 
+    if (unlikely(neigh_node->table_id >= MAX_ROUTE_TBLS))
+        return -EINVAL;
+
     if (likely(!(neigh_node->flag & NEIGH_HASHED))) {
         hashkey = neigh_hashkey(neigh_node->af, &neigh_node->next_hop);
         hlist_add_head(&neigh_node->hnode,
@@ -113,6 +136,9 @@ int arp_neigh_del_ht(struct neigh_entry *neigh_node)
     if (unlikely(neigh_node == NULL)) {
         return -EINVAL;
     }
+
+    if (unlikely(neigh_node->table_id >= MAX_ROUTE_TBLS))
+        return -EINVAL;
 
     if (likely(neigh_node->flag & NEIGH_HASHED)) {
         hlist_del(&neigh_node->hnode);
@@ -158,6 +184,9 @@ int neigh_add(void *arg)
     }
 
     neigh_node = (struct neigh_entry *)arg;
+    if (unlikely(neigh_node->table_id >= MAX_ROUTE_TBLS))
+        return -EINVAL;
+
     hashkey = neigh_hashkey(neigh_node->af, &neigh_node->next_hop);
     hlist_for_each_entry(neigh_node_tmp, &this_lcore_neigh_tables_p[neigh_node->table_id].ht[hashkey], hnode) {
         if (inet_addr_equal(neigh_node->af, &neigh_node_tmp->next_hop, &neigh_node->next_hop)) {
@@ -191,6 +220,9 @@ int neigh_del(void *arg)
     }
 
     neigh_node = (struct neigh_entry *)arg;
+    if (unlikely(neigh_node->table_id >= MAX_ROUTE_TBLS))
+        return -EINVAL;
+
     if (likely(neigh_node = neigh_lookup(neigh_node->table_id, AF_INET, &neigh_node->next_hop))) {
         if (unlikely(!(neigh_node->flag & NEIGH_STATIC))) {
             return -EBUSY;
@@ -198,7 +230,11 @@ int neigh_del(void *arg)
 
         hlist_del(&neigh_node->hnode);
         rte_atomic32_dec(&this_lcore_neigh_tables_p[neigh_node->table_id].cnt);
+#ifdef NEIGH_USE_MEMPOOL
+        rte_mempool_put(neigh_node->mp, neigh_node);
+#else
         rte_free((void *)neigh_node);
+#endif
         return 0;
     }
 
@@ -225,7 +261,11 @@ int neigh_table_clear(void *arg)
                 }
                 hlist_del(&neigh_node->hnode);
                 rte_atomic32_dec(&this_lcore_neigh_tables_p[table_id].cnt);
+#ifdef NEIGH_USE_MEMPOOL
+                rte_mempool_put(neigh_node->mp, neigh_node);
+#else
                 rte_free((void *)neigh_node);
+#endif
             }
         }
     }
@@ -254,6 +294,30 @@ int new_neigh_init(void *arg)
 
     RTE_SET_USED(arg);
     this_lcore_socket_id = rte_lcore_to_socket_id(rte_lcore_id());
+
+#ifdef NEIGH_USE_MEMPOOL
+    char name[RTE_MEMZONE_NAMESIZE] = {0};
+    int ret = snprintf(name, sizeof(name), "neigh_mempool_%u", rte_lcore_id());
+    if (unlikely(ret < 0 || ret >= (int)sizeof(name))) {
+        return -EINVAL;
+    }
+    this_lcore_neigh_mempool_p = rte_mempool_create(
+        name,
+        g_conf_tbl_entry_size.neigh_entry_size,
+        sizeof(struct neigh_entry),
+        0,
+        0,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        this_lcore_socket_id,
+        MEMPOOL_F_SP_PUT | MEMPOOL_F_SC_GET);
+    if (unlikely(this_lcore_neigh_mempool_p == NULL)) {
+        return -ENOMEM;
+    }
+#endif
+
     this_lcore_neigh_tables_p = (struct neigh_table *)rte_zmalloc_socket
         ("new_neigh_table", sizeof(struct neigh_table) * MAX_ROUTE_TBLS, 
         RTE_CACHE_LINE_SIZE, this_lcore_socket_id);

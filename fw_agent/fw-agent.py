@@ -142,7 +142,7 @@ SecPolicyOutCfgBp = Blueprint('SecPolicyOutCfgBp', __name__)
 AspfPolicyCfgBp  = Blueprint('AspfPolicyCfgBp', __name__)
 SecPolicyInOrderBp = Blueprint('SecPolicyInOrderBp', __name__)
 SecPolicyOutOrderBp = Blueprint('SecPolicyOutOrderBp', __name__)
-IpsCfgBp  = Blueprint('IpsCfgBp', __name__)
+DpiCfgBp  = Blueprint('DpiCfgBp', __name__)
 IpsRuleCfgBp  = Blueprint('IpsRuleCfgBp', __name__)
 
 # l2 cfg
@@ -166,7 +166,7 @@ SecPolicyOutCfgApi = Api(SecPolicyOutCfgBp)
 AspfPolicyCfgApi = Api(AspfPolicyCfgBp)
 SecPolicyInOrderApi = Api(SecPolicyInOrderBp)
 SecPolicyOutOrderApi = Api(SecPolicyOutOrderBp)
-IpsCfgApi = Api(IpsCfgBp)
+DpiCfgApi = Api(DpiCfgBp)
 IpsRuleCfgApi = Api(IpsRuleCfgBp)
 
 VlanPortCfgApi = Api(VlanPortCfgBp)
@@ -189,7 +189,7 @@ app.register_blueprint(SecPolicyOutCfgBp)
 app.register_blueprint(AspfPolicyCfgBp)
 app.register_blueprint(SecPolicyInOrderBp)
 app.register_blueprint(SecPolicyOutOrderBp)
-app.register_blueprint(IpsCfgBp)
+app.register_blueprint(DpiCfgBp)
 app.register_blueprint(IpsRuleCfgBp)
 
 app.register_blueprint(VlanPortCfgBp)
@@ -1827,7 +1827,7 @@ class VrfCfg(Resource):
             #return jsonify(ret = self.return_string)
             return jsonify(result)
 
-class IpsCfg(Resource):
+class DpiCfg(Resource):
     def __init__(self):
         self.reqparse = reqparse.RequestParser(trim = True, bundle_errors = True)
         self.reqparse.add_argument('uid',     type = str, location = 'json', required=True)
@@ -2958,23 +2958,23 @@ class VrrpCfg(Resource):
         self.reqparse = reqparse.RequestParser(trim = True, bundle_errors = True)
         self.reqparse.add_argument('status',        type = str, default = '', location = 'json', choices = ('enable', 'disable'))
         self.reqparse.add_argument('interface',     type = str, default = '', location = 'json')
-        self.reqparse.add_argument('unicast_peer',  type = str, default = '', location = 'json')
+        self.reqparse.add_argument('peer',          type = str, default = '', location = 'json')
         self.reqparse.add_argument('vrid',          type = str, default = '', location = 'json')
         self.reqparse.add_argument('priority',      type = str, default = '', location = 'json')
         self.reqparse.add_argument('interval',      type = str, default = '', location = 'json')
-        self.reqparse.add_argument('vip_proto',     type = str, default = '', location = 'json', choices = ('v4', 'v6'))
         self.reqparse.add_argument('vip',           type = str, default = '', location = 'json')
+        self.reqparse.add_argument('vip6',          type = str, default = '', location = 'json')
         self.reqparse.add_argument('preempt_delay', type = str, default = '', location = 'json')
 
         self.args          = self.reqparse.parse_args(strict = True)
         self.status        = self.args['status'].strip()
         self.interface     = self.args['interface'].strip()
-        self.unicast_peer  = self.args['unicast_peer'].strip()
+        self.peer          = self.args['peer'].strip()
         self.vrid          = self.args['vrid'].strip()
         self.priority      = self.args['priority'].strip()
         self.interval      = self.args['interval'].strip()
-        self.vip_proto     = self.args['vip_proto'].strip()
         self.vip           = self.args['vip'].strip()
+        self.vip6          = self.args['vip6'].strip()
         self.preempt_delay = self.args['preempt_delay'].strip()
         self.msgs = list()
 
@@ -2993,14 +2993,9 @@ class VrrpCfg(Resource):
 
         url = request.path.strip('/ ').rsplit('/', 1)
         if url[-1] == 'update':
-            if self.vip_proto == 'v4':
-                vfwcfg.vrrp_cfg_set(s, vrrp_enable=self.status, vrrp_interface=self.interface, vrrp_unicast_peer=self.unicast_peer,
-                        vrrp_virtual_router_id=self.vrid, vrrp_priority=self.priority, vrrp_advert_int=self.interval,
-                        vrrp_virtual_ipaddress=self.vip, vrrp_preempt_delay=self.preempt_delay)
-            else:
-                vfwcfg.vrrp_cfg_set(s, vrrp_enable=self.status, vrrp_interface=self.interface, vrrp_unicast_peer=self.unicast_peer,
-                        vrrp_virtual_router_id=self.vrid, vrrp_priority=self.priority, vrrp_advert_int=self.interval,
-                        vrrp_virtual_ipv6=self.vip, vrrp_preempt_delay=self.preempt_delay)
+            vfwcfg.vrrp_cfg_set(s, vrrp_enable=self.status, vrrp_interface=self.interface, vrrp_unicast_peer=self.peer,
+                    vrrp_virtual_router_id=self.vrid, vrrp_priority=self.priority, vrrp_advert_int=self.interval,
+                    vrrp_virtual_ipaddress=self.vip, vrrp_virtual_ipv6=self.vip6, vrrp_preempt_delay=self.preempt_delay)
 
             vfwcfg.dumpf(s, dst_file)
 
@@ -3010,8 +3005,8 @@ class VrrpCfg(Resource):
             if self.interface:
                 self.msgs.append('set vrrp interface {}'.format(self.interface))
 
-            if self.unicast_peer:
-                self.msgs.append('set vrrp unicast-peer {}'.format(self.unicast_peer))
+            if self.peer:
+                self.msgs.append('set vrrp unicast-peer {}'.format(self.peer))
 
             if self.vrid:
                 self.msgs.append('set vrrp vrid {}'.format(self.vrid))
@@ -3022,11 +3017,11 @@ class VrrpCfg(Resource):
             if self.interval:
                 self.msgs.append('set vrrp timer advertise {}'.format(self.interval))
 
-            if self.vip_proto == 'v4':
+            if self.vip:
                 self.msgs.append('set vrrp virtual-ip {}'.format(self.vip))
 
-            if self.vip_proto == 'v6':
-                self.msgs.append('set vrrp virtual-ipv6 {}'.format(self.vip))
+            if self.vip6:
+                self.msgs.append('set vrrp virtual-ipv6 {}'.format(self.vip6))
 
             if self.preempt_delay:
                 self.msgs.append('set vrrp preempt-mode delay {}'.format(self.preempt_delay))
@@ -3079,8 +3074,8 @@ SecPolicyInOrderApi.add_resource(SecPolicyInOrderCfg,   '/vfw/api/v1/system/secp
 
 SecPolicyOutOrderApi.add_resource(SecPolicyOutOrderCfg, '/vfw/api/v1/system/secpolicyout/order/update')
 
-IpsCfgApi.add_resource(IpsCfg,                          '/vfw/api/v1/system/ipscfg/query',
-                                                        '/vfw/api/v1/system/ipscfg/update')
+DpiCfgApi.add_resource(DpiCfg,                          '/vfw/api/v1/system/dpicfg/query',
+                                                        '/vfw/api/v1/system/dpicfg/update')
 
 IpsRuleCfgApi.add_resource(IpsRuleCfg,                  '/vfw/api/v1/system/ipsrule/query',
                                                         '/vfw/api/v1/system/ipsrule/update')
@@ -3116,8 +3111,8 @@ FlowSwitchCfgApi.add_resource(FlowSwitchCfg,            '/vfw/api/v1/system/flow
 RateLimitCfgApi.add_resource(RateLimitCfg,              '/vfw/api/v1/system/rate-limit/query',
                                                         '/vfw/api/v1/system/rate-limit/update')
 
-VrrpCfgApi.add_resource(VrrpCfg,                        '/vfw/api/v1/system/vrrp/query',
-                                                        '/vfw/api/v1/system/vrrp/update')
+VrrpCfgApi.add_resource(VrrpCfg,                        '/vfw/api/v1/system/vrrpcfg/query',
+                                                        '/vfw/api/v1/system/vrrpcfg/update')
 
 
 def signal_func(sig, frame):

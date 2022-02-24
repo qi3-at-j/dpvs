@@ -19,6 +19,7 @@
 #define DPI_ETH_LEN 14
 static DPI_GRP_S *g_pst_dpi = NULL;
 
+
 UINT32 g_ips_enable;/*ips switch*/
 UINT32 g_apr_enable;/*apr switch*/
 
@@ -49,7 +50,7 @@ UINT32 GetVrfIDFromMbuf(IN const MBUF_S *pstMbuf)
 UINT SuriToFWAction(IN UINT uiAction)
 {
     UINT uiPktAction = PKT_CONTINUE;
-    switch(uiAction)
+    /*switch(uiAction)
     {
         case SURI_ACTION_DROP:
         case SURI_ACTION_REJECT:
@@ -60,7 +61,15 @@ UINT SuriToFWAction(IN UINT uiAction)
         case SURI_ACTION_ALERT:
         default:
             break;
+    }*/
+    if (TEST_ACTION(uiAction, SURI_ACTION_DROP)
+        || TEST_ACTION(uiAction, SURI_ACTION_REJECT)
+        || TEST_ACTION(uiAction, SURI_ACTION_REJECT_DST)
+        || TEST_ACTION(uiAction, SURI_ACTION_REJECT_BOTH))
+    {
+        uiPktAction = PKT_DROPPED;
     }
+    
     return uiPktAction;
 }
 
@@ -112,6 +121,7 @@ VOID DPI_Check(IN const MBUF_S *pstMbuf, IN UINT uiServiceMask, INOUT DPI_PARA_S
     pstDpiPkt->uiServiceMask = uiServiceMask;
     pstDpiPkt->uiAppID = APR_ID_INVALID;
     pstDpiPkt->uiDirect = pstDPI->uiDirect;
+    pstDpiPkt->uiRuleID = 0;
 
     //printf("mempool\n");
     mbuf_may_pull(pstRteMbuf, pstDpiPkt->uiLen);
@@ -144,7 +154,8 @@ VOID DPI_Check(IN const MBUF_S *pstMbuf, IN UINT uiServiceMask, INOUT DPI_PARA_S
         (pstDpiPkt->uiAction != PKT_ACTION_INVALID))
     {
         pstDPI->uiAction = SuriToFWAction(pstDpiPkt->uiAction);
-        //printf("action %d\n", pstDPI->uiAction);
+        pstDPI->uiRuleID = pstDpiPkt->uiRuleID;
+        //printf("fw action %d, ruleid %d, ips action %d\n", pstDPI->uiAction, pstDPI->uiRuleID, pstDpiPkt->uiAction);
     }
 
     if (BIT_TEST(pstDpiPkt->uiServiceMask, PKT_SERVICE_TYPE_APR) && 
@@ -179,6 +190,7 @@ VOID IPS_Check(IN const MBUF_S *pstMbuf, INOUT IPS_PARA_S *pstIPS)
     stDPI.uiDirect = pstIPS->uiDirect;
     DPI_Check(pstMbuf, uiMask, &stDPI);
     pstIPS->uiAction = stDPI.uiAction;
+    pstIPS->uiRuleID = stDPI.uiRuleID;
     return;
 }
 

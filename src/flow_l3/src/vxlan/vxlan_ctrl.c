@@ -7,14 +7,21 @@
 
 #include "vxlan_ctrl_priv.h"
 #include "common_priv.h"
+#include "flow_l3_cfg_init_priv.h"
 
 struct vxlan_tunnel_table *g_lcores_vxlan_tunnel_table_p[RTE_MAX_LCORE]; // for cmd pthread
+extern struct conf_tbl_entry_size g_conf_tbl_entry_size;
 
 #define this_lcore_vxlan_tunnel_table      (RTE_PER_LCORE(vxlan_tunnel_table_lcore))
 #define this_lcore_socket_id        (RTE_PER_LCORE(socket_id_lcore))
 
 static RTE_DEFINE_PER_LCORE(struct vxlan_tunnel_table, vxlan_tunnel_table_lcore);
 static RTE_DEFINE_PER_LCORE(uint32_t, socket_id_lcore);
+
+#ifdef VXLAN_TUNN_USE_MEMPOOL
+#define this_lcore_vxlan_tunn_mempool_p      (RTE_PER_LCORE(vxlan_tunn_mempool_lcore))
+static RTE_DEFINE_PER_LCORE(struct rte_mempool *, vxlan_tunn_mempool_lcore);
+#endif
 
 #if 0
 static int vxlan_tunnel_init(void)
@@ -109,6 +116,30 @@ static int vxlan_tunnel_init(void)
 {
 
     this_lcore_socket_id = rte_lcore_to_socket_id(rte_lcore_id());
+
+#ifdef VXLAN_TUNN_USE_MEMPOOL
+        char name[RTE_MEMZONE_NAMESIZE] = {0};
+        int ret = snprintf(name, sizeof(name), "vxlan_tunn_mempool_%u", rte_lcore_id());
+        if (unlikely(ret < 0 || ret >= (int)sizeof(name))) {
+            return -EINVAL;
+        }
+        this_lcore_vxlan_tunn_mempool_p = rte_mempool_create(
+            name,
+            g_conf_tbl_entry_size.vxlan_tunn_entry_size,
+            sizeof(struct vxlan_tunnel_entry),
+            0,
+            0,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            this_lcore_socket_id,
+            MEMPOOL_F_SP_PUT | MEMPOOL_F_SC_GET);
+        if (unlikely(this_lcore_vxlan_tunn_mempool_p == NULL)) {
+            return -ENOMEM;
+        }
+#endif
+
     HLIST_TABLE_INIT(VXLAN_TUNNEL_BUCKETS_NUM, this_lcore_vxlan_tunnel_table, ht);
     g_lcores_vxlan_tunnel_table_p[rte_lcore_id()] = &this_lcore_vxlan_tunnel_table;
     return 0;
@@ -129,29 +160,63 @@ static int vxlan_tunnel_add(struct vxlan_tunnel_entry *vxlan_tunnel_node)
     }
 
     struct vxlan_tunnel_entry *new_node = NULL;
+#ifdef VXLAN_TUNN_USE_MEMPOOL
+    if (unlikely(rte_mempool_get(this_lcore_vxlan_tunn_mempool_p, (void **)&new_node)))
+        return -ENOMEM;
+    rte_memcpy(new_node, vxlan_tunnel_node, sizeof(struct vxlan_tunnel_entry));
+    new_node->mp = this_lcore_vxlan_tunn_mempool_p;
+#else
     if (unlikely(new_entry("new_vxlan_tunnel_entry", this_lcore_socket_id,
         sizeof(struct vxlan_tunnel_entry), (void *)vxlan_tunnel_node,
         (void **)&new_node) == false)) {
         return -ENOMEM;
     }
+#endif
 
-    HLIST_TABLE_ADD(vxlan_tunnel_node->vni, VXLAN_TUNNEL_BUCKETS_NUM, my_hash1, 
+    HLIST_TABLE_ADD(vxlan_tunnel_node->vni, VXLAN_TUNNEL_BUCKETS_NUM, my_hash1,
         new_node->hnode, this_lcore_vxlan_tunnel_table, ht, cnt); 
+
     return 0;
 }
 
-static int vxlan_tunnel_del(struct vxlan_tunnel_entry *vxlan_tunnel_node)
+static inline int vxlan_tunnel_del(struct vxlan_tunnel_entry *vxlan_tunnel_node)
 {
+#ifdef VXLAN_TUNN_USE_MEMPOOL
+    if (likely(vxlan_tunnel_node = vxlan_tunnel_lookup(vxlan_tunnel_node))) {
+        hlist_del(&vxlan_tunnel_node->hnode);
+        rte_atomic32_dec(&this_lcore_vxlan_tunnel_table.cnt);
+        rte_mempool_put(vxlan_tunnel_node->mp, vxlan_tunnel_node);
+        return 0;
+    }
+    return -ENOENT;
+#else
     struct vxlan_tunnel_entry *pos;
     HLIST_TABLE_DEL(vxlan_tunnel_node->vni, VXLAN_TUNNEL_BUCKETS_NUM, my_hash1, pos, 
         this_lcore_vxlan_tunnel_table, ht, hnode, cnt, vni);
+#endif
 }
 
-static int vxlan_tunnel_clear(void)
+static inline int vxlan_tunnel_clear(void)
 {
     struct vxlan_tunnel_entry *vxlan_tunnel_node;
+
+#ifdef VXLAN_TUNN_USE_MEMPOOL
+    int i;
+    struct hlist_node *next_node;
+
+    for (i = 0; i < VXLAN_TUNNEL_BUCKETS_NUM; i++) {
+        hlist_for_each_entry_safe(vxlan_tunnel_node, next_node,
+            &this_lcore_vxlan_tunnel_table.ht[i], hnode) {
+            hlist_del(&vxlan_tunnel_node->hnode);
+            rte_atomic32_dec(&this_lcore_vxlan_tunnel_table.cnt);
+            rte_mempool_put(vxlan_tunnel_node->mp, vxlan_tunnel_node);
+        }
+    }
+#else
     HLIST_TABLE_CLEAR(VXLAN_TUNNEL_BUCKETS_NUM, vxlan_tunnel_node, 
         this_lcore_vxlan_tunnel_table, ht, hnode, cnt);
+#endif
+
     return 0;
 }
 #endif

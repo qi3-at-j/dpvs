@@ -44,6 +44,7 @@ typedef struct _process_cb {
     pid_t pid;
     char  name[16];
     uint32_t status;
+    uint32_t restart_cnt;
 } process_cb_t;
 
 process_cb_t tasks[TASK_MAX_NUM];
@@ -136,6 +137,7 @@ void init_task_pcb(void)
         tasks[i].pid = -1;
         tasks[i].name[0] = '\0';
         tasks[i].status = TASK_EXIT;
+        tasks[i].restart_cnt = 0;
     }
 
     //kill_process(FW_CFG_WORK_NAME);
@@ -229,12 +231,16 @@ static void loop_tasks(void *arg)
             }
             */
 
-            if (0 == strcmp(tasks[i].name, FW_AGENT_WORK_NAME)) {
+            if (0 == strcmp(tasks[i].name, FW_AGENT_WORK_NAME) &&
+                tasks[i].restart_cnt < 10) {
                 fork_and_run_process(agent_work, pid, 0, FW_AGENT_WORK_NAME);
+                tasks[i].restart_cnt++;
             }
             
-            if (0 == strcmp(tasks[i].name, FW_DPI_WORK_NAME)) {
+            if (0 == strcmp(tasks[i].name, FW_DPI_WORK_NAME) &&
+                tasks[i].restart_cnt < 10) {
               //  fork_and_run_process(ips_work, pid, 0, FW_DPI_WORK_NAME);
+                tasks[i].restart_cnt++;
             }
         }
     }

@@ -75,17 +75,17 @@ ip4_rcv_finish(s_nc_param_l3 *param)
         if (route_node->flag == ROUTE_FLAG_LOCALIN &&
             !(iph->next_proto_id == IPPROTO_ICMP)) {
             next_node = IP4_RCV_FINISH_NEXT_LOCAL;
-            route4_put(route_node);
+            graph_route4_put(route_node);
         } else if (route_node->flag == ROUTE_FLAG_FORWARD ||
                    iph->next_proto_id == IPPROTO_ICMP) {
             if (mbuf->packet_type == ETH_PKT_HOST) {
                 next_node = IP4_RCV_FINISH_NEXT_FORWARD;
                 GET_MBUF_PRIV_DATA(mbuf)->p_priv_data_route = route_node;
             } else { /* dont forward multicast or broadcast */
-                route4_put(route_node);
+                graph_route4_put(route_node);
             }
         } else {
-            route4_put(route_node);
+            graph_route4_put(route_node);
         }
     }else {
         L3_DEBUG_TRACE(L3_ERR, "%s node:lookup %s failed!!!\n",

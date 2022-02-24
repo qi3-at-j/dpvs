@@ -245,7 +245,7 @@ cmd_batch_sock_init(void)
         return -1;
     }
 
-    if (-1 == listen(srv_fd, 1)) {
+    if (-1 == listen(srv_fd, 1024)) {
         RTE_LOG(ERR, CMDBATCH, "%s: Server socket listen failed\n", __func__);
         close(srv_fd);
         unlink(TYFLOW_UD_CMD_BATCH);

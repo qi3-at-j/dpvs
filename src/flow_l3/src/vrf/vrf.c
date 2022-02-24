@@ -8,6 +8,9 @@
 #include "vrf_priv.h"
 #include "common_priv.h"
 #include "log_priv.h"
+#include "flow_l3_cfg_init_priv.h"
+
+extern struct conf_tbl_entry_size g_conf_tbl_entry_size;
 
 struct vrf_map *g_lcores_vrf_table_p[RTE_MAX_LCORE];
 #if VRF_USE_VNI_HASH
@@ -32,6 +35,13 @@ static RTE_DEFINE_PER_LCORE(struct vrf_vni_map, vrf_vni_map_lcore);
 #if VRF_USE_IP_HASH
 #define this_lcore_vrf_ip_map      (RTE_PER_LCORE(vrf_ip_map_lcore))
 static RTE_DEFINE_PER_LCORE(struct vrf_ip_map, vrf_ip_map_lcore);
+#endif
+
+#ifdef VRF_USE_MEMPOOL
+#define this_lcore_vrf_mempool_p      (RTE_PER_LCORE(vrf_mempool_lcore))
+static RTE_DEFINE_PER_LCORE(struct rte_mempool *, vrf_mempool_lcore);
+#define this_lcore_vrf_bind_mempool_p      (RTE_PER_LCORE(vrf_bind_mempool_lcore))
+static RTE_DEFINE_PER_LCORE(struct rte_mempool *, vrf_bind_mempool_lcore);
 #endif
 
 #if VRF_USE_VNI_HASH
@@ -176,11 +186,17 @@ static inline int vrf_add(uint32_t table_id)
         }
     }
 
+#ifdef VRF_USE_MEMPOOL
+    if (unlikely(rte_mempool_get(this_lcore_vrf_mempool_p, (void **)&new_vrf_node)))
+        return -ENOMEM;
+    new_vrf_node->mp = this_lcore_vrf_mempool_p;
+#else
     new_vrf_node = (struct vrf_map_elem *)rte_zmalloc_socket("new_vrf_map_elem", 
         sizeof(struct vrf_map_elem), RTE_CACHE_LINE_SIZE, this_lcore_socket_id);
-    if (new_vrf_node == NULL){
+    if (new_vrf_node == NULL) {
         return -ENOMEM;
     }
+#endif
 
     new_vrf_node->table_id = table_id;
     INIT_LIST_HEAD(&new_vrf_node->vrf_list);
@@ -212,6 +228,11 @@ static inline int vrf_bind_port(struct net_vrf *vrf_bind_node)
         }
     }
 
+#ifdef VRF_USE_MEMPOOL
+    if (unlikely(rte_mempool_get(this_lcore_vrf_bind_mempool_p, (void **)&net_vrf)))
+        return -ENOMEM;
+    net_vrf->mp = this_lcore_vrf_bind_mempool_p;
+#else
     net_vrf = (struct net_vrf *)rte_zmalloc_socket("new_net_vrf",
             sizeof(struct net_vrf),
             RTE_CACHE_LINE_SIZE,
@@ -219,6 +240,7 @@ static inline int vrf_bind_port(struct net_vrf *vrf_bind_node)
     if (net_vrf == NULL) {
         return -ENOMEM;
     }
+#endif
 
     net_vrf->type = VRF_TYPE_PORT;
     net_vrf->port = vrf_bind_node->port;
@@ -252,6 +274,11 @@ static inline int vrf_bind_vni(struct net_vrf *vrf_bind_node)
         }
     }
 
+#ifdef VRF_USE_MEMPOOL
+    if (unlikely(rte_mempool_get(this_lcore_vrf_bind_mempool_p, (void **)&net_vrf)))
+        return -ENOMEM;
+    net_vrf->mp = this_lcore_vrf_bind_mempool_p;
+#else
     net_vrf = (struct net_vrf *)rte_zmalloc_socket("new_net_vrf",
             sizeof(struct net_vrf),
             RTE_CACHE_LINE_SIZE,
@@ -259,13 +286,18 @@ static inline int vrf_bind_vni(struct net_vrf *vrf_bind_node)
     if (net_vrf == NULL) {
         return -ENOMEM;
     }
+#endif
 
     net_vrf->type = VRF_TYPE_VNI;
     net_vrf->vni = vrf_bind_node->vni;
     net_vrf->table_id = vrf_bind_node->table_id;
     int ret = vrf_vni_add(net_vrf);
     if (unlikely(ret)) {
+#ifdef VRF_USE_MEMPOOL
+        rte_mempool_put(net_vrf->mp, net_vrf);
+#else
         rte_free(net_vrf);
+#endif
         return ret;
     }
 
@@ -299,13 +331,19 @@ static inline int vrf_bind_ip(struct net_vrf *vrf_bind_node)
         }
     }
 
+#ifdef VRF_USE_MEMPOOL
+    if (unlikely(rte_mempool_get(this_lcore_vrf_bind_mempool_p, (void **)&net_vrf)))
+        return -ENOMEM;
+    net_vrf->mp = this_lcore_vrf_bind_mempool_p;
+#else
     net_vrf = (struct net_vrf *)rte_zmalloc_socket("new_net_vrf",
             sizeof(struct net_vrf),
             RTE_CACHE_LINE_SIZE,
             this_lcore_socket_id);
-    if (net_vrf == NULL){
+    if (net_vrf == NULL) {
         return -ENOMEM;
     }
+#endif
 
     net_vrf->type = VRF_TYPE_IP;
     net_vrf->family = vrf_bind_node->family;
@@ -313,7 +351,11 @@ static inline int vrf_bind_ip(struct net_vrf *vrf_bind_node)
     net_vrf->table_id = vrf_bind_node->table_id;
     int ret = vrf_ip_add(net_vrf);
     if (unlikely(ret)) {
+#ifdef VRF_USE_MEMPOOL
+        rte_mempool_put(net_vrf->mp, net_vrf);
+#else
         rte_free(net_vrf);
+#endif
         return ret;
     }
 
@@ -364,11 +406,15 @@ static inline int vrf_unbind_port(struct net_vrf *vrf_bind_node)
 
     list_for_each_entry(net_vrf, &vrf_node->vrf_list, me_list) {
         if ((net_vrf->type == vrf_bind_node->type) &&
-            (net_vrf->port->id == vrf_bind_node->port->id)) {
+                (net_vrf->port->id == vrf_bind_node->port->id)) {
             vrf_bind_node->port->table_id = GLOBAL_ROUTE_TBL_ID; //should be use lock!!!
             list_del(&net_vrf->me_list);
             rte_atomic32_dec(&vrf_node->cnt);
-            rte_free((void *)net_vrf);
+#ifdef VRF_USE_MEMPOOL
+            rte_mempool_put(net_vrf->mp, net_vrf);
+#else
+            rte_free(net_vrf);
+#endif
             return 0;
         }
     }
@@ -393,11 +439,15 @@ static inline int vrf_unbind_vni(struct net_vrf *vrf_bind_node)
 
     list_for_each_entry(net_vrf, &vrf_node->vrf_list, me_list) {
         if ((net_vrf->type == vrf_bind_node->type) &&
-            (net_vrf->vni == vrf_bind_node->vni)) {
+                (net_vrf->vni == vrf_bind_node->vni)) {
             vrf_vni_del(net_vrf->vni);
             list_del(&net_vrf->me_list);
             rte_atomic32_dec(&vrf_node->cnt);
-            rte_free((void *)net_vrf);
+#ifdef VRF_USE_MEMPOOL
+            rte_mempool_put(net_vrf->mp, net_vrf);
+#else
+            rte_free(net_vrf);
+#endif
             return 0;
         }
     }
@@ -422,13 +472,17 @@ static inline int vrf_unbind_ip(struct net_vrf *vrf_bind_node)
 
     list_for_each_entry(net_vrf, &vrf_node->vrf_list, me_list) {
         if ((net_vrf->type == vrf_bind_node->type) &&
-            (vrf_bind_node->family == net_vrf->family) &&
-            (inet_addr_eq(vrf_bind_node->family,
+                (vrf_bind_node->family == net_vrf->family) &&
+                (inet_addr_eq(vrf_bind_node->family,
                 &net_vrf->ip, &vrf_bind_node->ip))) {
             vrf_ip_del(net_vrf);
             list_del(&net_vrf->me_list);
             rte_atomic32_dec(&vrf_node->cnt);
-            rte_free((void *)net_vrf);
+#ifdef VRF_USE_MEMPOOL
+            rte_mempool_put(net_vrf->mp, net_vrf);
+#else
+            rte_free(net_vrf);
+#endif
             return 0;
         }
     }
@@ -494,13 +548,21 @@ static inline int vrf_del_clear_id(uint32_t table_id, int del_flag)
 
         list_del(&net_vrf->me_list);
         rte_atomic32_dec(&vrf_node->cnt);
+#ifdef VRF_USE_MEMPOOL
+        rte_mempool_put(net_vrf->mp, net_vrf);
+#else
         rte_free(net_vrf);
+#endif
     }
 
     if (del_flag) {   
         hlist_del(&vrf_node->hnode);
         rte_atomic32_dec(&this_lcore_vrf_map.cnt);
-        rte_free(vrf_node);
+#ifdef VRF_USE_MEMPOOL
+        rte_mempool_put(vrf_node->mp, vrf_node);
+#else
+        rte_free((void *)vrf_node);
+#endif
     }
 
     return 0;
@@ -557,12 +619,20 @@ static inline int vrf_del_clear_all(int del_flag)
                 }
                 list_del(&net_vrf->me_list);
                 rte_atomic32_dec(&vrf_node->cnt);
+#ifdef VRF_USE_MEMPOOL
+                rte_mempool_put(net_vrf->mp, net_vrf);
+#else
                 rte_free(net_vrf);
+#endif
             }
             if (del_flag) {                
                 hlist_del(&vrf_node->hnode);
                 rte_atomic32_dec(&this_lcore_vrf_map.cnt);
-                rte_free(vrf_node);
+#ifdef VRF_USE_MEMPOOL
+                rte_mempool_put(vrf_node->mp, vrf_node);
+#else
+                rte_free((void *)vrf_node);
+#endif
             }
         }
     }    
@@ -578,6 +648,50 @@ int api_vrf_init(void *arg)
 
     RTE_SET_USED(arg);
     this_lcore_socket_id = rte_lcore_to_socket_id(rte_lcore_id());
+
+#ifdef VRF_USE_MEMPOOL
+    char name[RTE_MEMZONE_NAMESIZE] = {0};
+    int ret = snprintf(name, sizeof(name), "vrf_mempool_%u", rte_lcore_id());
+    if (unlikely(ret < 0 || ret >= (int)sizeof(name))) {
+        return -EINVAL;
+    }
+    this_lcore_vrf_mempool_p = rte_mempool_create(
+        name,
+        g_conf_tbl_entry_size.tbl_size,
+        sizeof(struct vrf_map_elem),
+        0,
+        0,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        this_lcore_socket_id,
+        MEMPOOL_F_SP_PUT | MEMPOOL_F_SC_GET);
+    if (unlikely(this_lcore_vrf_mempool_p == NULL)) {
+        return -ENOMEM;
+    }
+
+    ret = snprintf(name, sizeof(name), "vrf_bind_mempool_%u", rte_lcore_id());
+    if (unlikely(ret < 0 || ret >= (int)sizeof(name))) {
+        return -EINVAL;
+    }
+    this_lcore_vrf_bind_mempool_p = rte_mempool_create(
+        name,
+        g_conf_tbl_entry_size.vrf_bind_size,
+        sizeof(struct net_vrf),
+        0,
+        0,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        this_lcore_socket_id,
+        MEMPOOL_F_SP_PUT | MEMPOOL_F_SC_GET);
+    if (unlikely(this_lcore_vrf_bind_mempool_p == NULL)) {
+        return -ENOMEM;
+    }
+#endif
+
     for (i = 0; i < VRF_BUCKETS_NUM; i++)
         INIT_HLIST_HEAD(&this_lcore_vrf_map.ht[i]);
 

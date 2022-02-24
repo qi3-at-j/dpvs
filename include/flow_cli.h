@@ -33,9 +33,16 @@ enum {
     FLOW_CMD_MSG_SUBTYPE_COUNTER,
     FLOW_CMD_MSG_SUBTYPE_HASHTOP,
     FLOW_CMD_MSG_SUBTYPE_HASH,
+    FLOW_CMD_MSG_SUBTYPE_DENY,
     SESS_CMD_MSG_SUBTYPE_SHOW,
     SESS_CMD_MSG_SUBTYPE_CLEAR,
 };
+
+enum {
+    FLOW_CMD_MSG_CLEAR_COUNTER = 1,
+    FLOW_CMD_MSG_CLEAR_FCP,
+};
+
 
 #define number_2_mask(x) (((2<<(x))-1)<<(32-(x)))
 /*** used for get or clear connections ***/
@@ -95,7 +102,7 @@ typedef struct {
     cmd_msg_hdr_t msg_hdr;
 } clear_flow_ctx_t;
 
-typedef void (* selected_connection_vector_t)(flow_connection_t *, void *);
+typedef int (* selected_connection_vector_t)(flow_connection_t *, void *);
 
 int 
 select_this_connection(flow_connection_t *fcp, 

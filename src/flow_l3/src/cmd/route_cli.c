@@ -303,10 +303,10 @@ static inline int set_route_notice(cmd_blk_t *cbt)
         rte_rwlock_write_unlock(&cmd_notice_entry.rwlock);
         return -EINVAL;
     }
+
     cmd_notice_entry.type = NT_SET_RT;
     cmd_notice_entry.cbt = cbt;
     rte_rwlock_write_unlock(&cmd_notice_entry.rwlock);
-
 
     RTE_LCORE_FOREACH(lcore_id) {
         if (rte_lcore_is_enabled(lcore_id) == 0) {

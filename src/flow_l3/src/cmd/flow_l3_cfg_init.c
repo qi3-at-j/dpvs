@@ -12,8 +12,12 @@
 #include "notifier.h"
 #include "parser/parser.h"
 #include "vrrp_parser.h"
+#include "inetaddr.h"
+#include "../../../l2_meter.h"
 
 #define FLOW_CFG_FILE_NAME CFG_FILE_NAME
+
+struct conf_tbl_entry_size g_conf_tbl_entry_size;
 
 struct common_cmd_notice_entry *conf_entry[RTE_MAX_LCORE];
 
@@ -23,6 +27,8 @@ struct _tmp_val {
     uint32_t table_id;
     uint32_t vni;
 } tmp_val;
+
+char   g_ifname[IFNAMSIZ];
 
 static void create_conf_entry(uint16_t lcore_id)
 {    
@@ -43,11 +49,15 @@ static void create_conf_entry(uint16_t lcore_id)
             conf_entry[lcore_id])) {
         /* Launch per-lcore init on every worker lcore */
         printf("%s: call api_deq_l3_cmd_ring\n", __func__);
-        rte_eal_mp_remote_launch(api_deq_l3_cmd_ring, NULL, SKIP_MAIN);            
-        RTE_LCORE_FOREACH_WORKER(lcore_id_tmp) {
-            if (rte_eal_wait_lcore(lcore_id_tmp) < 0) {
-                printf("%s: api_deq_l3_cmd_ring failed!!!\n", __func__);
-            }
+        if(lcore_id == rte_get_main_lcore()){
+            api_deq_l3_cmd_ring(NULL);
+        }else{
+            rte_eal_mp_remote_launch(api_deq_l3_cmd_ring, NULL, SKIP_MAIN);            
+            RTE_LCORE_FOREACH_WORKER(lcore_id_tmp) {
+                if (rte_eal_wait_lcore(lcore_id_tmp) < 0) {
+                    printf("%s: api_deq_l3_cmd_ring failed!!!\n", __func__);
+                }
+           }
         }
     
         if (unlikely(rte_ring_enqueue(g_lcores_l3_cmd_ring[lcore_id],
@@ -274,6 +284,194 @@ static int do_deal_conf_data(uint16_t type, void *src, uint32_t lcore_id)
     }
 
     return 0;
+}
+
+
+static int do_deal_conf_port_ip4(char *str ,uint32_t lcore_id)
+{
+    //int err = 0;
+    char *prefix = str;
+    char *addr, *plen;
+    //struct netif_port *dev;
+
+    create_conf_entry(lcore_id);
+    struct inet_addr_param *param = &conf_entry[lcore_id]->data.port_ip;
+    conf_entry[lcore_id]->type = NT_SET_IP4;
+
+    memset(param, 0, sizeof(*param));
+    param->ifa_entry.af = AF_INET;
+    param->ifa_entry.scope = IFA_SCOPE_GLOBAL;
+    param->ifa_entry.plen = 32;
+    
+	if (!prefix) {
+        printf("missing IFADDR\n");
+		return -1;
+	}
+
+    addr = prefix;
+    if ((plen = strchr(addr, '/')) != NULL)
+        *plen++ = '\0';
+    if (inet_pton_try(&param->ifa_entry.af, prefix, &param->ifa_entry.addr) <= 0){
+        printf("inet_pton_try IFADDR error\n");
+        return -1;
+    }
+    
+    strlcpy(param->ifa_entry.ifname, g_ifname, sizeof(param->ifa_entry.ifname));
+ 
+    param->ifa_entry.plen = plen ? atoi(plen) : 0;
+
+    return 0;
+}
+
+static int do_deal_conf_port_ip6(char *str ,uint32_t lcore_id)
+{
+    //int err = 0;
+    char *prefix = str;
+    char *addr, *plen;
+    //struct netif_port *dev;
+
+    create_conf_entry(lcore_id);
+    struct inet_addr_param *param = &conf_entry[lcore_id]->data.port_ip;
+    conf_entry[lcore_id]->type = NT_SET_IP6;
+
+    memset(param, 0, sizeof(*param));
+    param->ifa_entry.af = AF_INET6;
+    param->ifa_entry.scope = IFA_SCOPE_GLOBAL;
+    param->ifa_entry.plen = 128;
+    
+	if (!prefix) {
+        printf("missing IFADDR\n");
+		return -1;
+	}
+
+    addr = prefix;
+    if ((plen = strchr(addr, '/')) != NULL)
+        *plen++ = '\0';
+    if (inet_pton_try(&param->ifa_entry.af, prefix, &param->ifa_entry.addr) <= 0){
+        printf("inet_pton_try IFADDR error\n");
+        return -1;
+    }
+    
+    strlcpy(param->ifa_entry.ifname, g_ifname, sizeof(param->ifa_entry.ifname));
+ 
+    param->ifa_entry.plen = plen ? atoi(plen) : 0;
+    return 0;
+}
+
+
+static int do_deal_conf_vlan_link(char *str, uint32_t lcore_id){
+    struct vlan_param *param = &conf_entry[lcore_id]->data.vlan;
+
+    strlcpy(param->real_dev, str, sizeof(param->real_dev));
+    return 0;
+}
+
+static int do_deal_conf_vlan_id(char *str, uint32_t lcore_id){
+    struct vlan_param *param = &conf_entry[lcore_id]->data.vlan;
+    
+    param->vlan_id = atoi(str); 
+    return 0;
+}
+
+static int do_deal_conf_meter_bandwith(char *str, uint32_t lcore_id){
+    struct meter_param *param = &conf_entry[lcore_id]->data.meter;
+    
+    param->bandwith = atoi(str); 
+    return 0;
+}
+
+static int do_deal_conf_data_main(uint16_t type, void *src, uint32_t lcore_id){
+    int ret = 0;
+
+    switch (type) {
+        case GET_PORT_IP4:
+            ret = do_deal_conf_port_ip4(src, lcore_id);
+            break;
+        case GET_PORT_IP6:
+            ret = do_deal_conf_port_ip6(src, lcore_id);
+            break;
+        case GET_VLAN_LINK:
+            ret = do_deal_conf_vlan_link(src, lcore_id);
+            break;
+        case GET_VLAN_ID:
+            ret = do_deal_conf_vlan_id(src, lcore_id);
+            break;
+        case GET_RATE_BANDWITH:
+            ret = do_deal_conf_meter_bandwith(src, lcore_id);
+            break;
+        default:
+            printf("unknown deal data type: %u\n", type);
+   }
+ 
+    return ret;
+}
+
+static inline void deal_conf_data_main(uint16_t type, char *src)
+{
+    common_notice_lcores(rte_lcore_id(), type, src, do_deal_conf_data_main);
+}
+static inline void port_ip_handler(vector_t tokens)
+{
+    char *str = set_value(tokens);
+ 
+    strlcpy(g_ifname, str, sizeof(g_ifname));
+    
+    FREE_PTR(str);
+}
+
+static inline void vlan_handler(vector_t tokens)
+{
+    char *str = set_value(tokens);
+    uint16_t lcore_id = rte_lcore_id();
+    create_conf_entry(lcore_id);
+    struct vlan_param *param = &conf_entry[lcore_id]->data.vlan;
+    
+    conf_entry[lcore_id]->type = NT_SET_VLAN;
+    strlcpy(param->ifname, str, sizeof(param->ifname));
+    param->vlan_proto = ETH_P_8021Q;
+    FREE_PTR(str);
+}
+
+static inline void vlan_link_handler(vector_t tokens){
+    char *str = set_value(tokens);
+    deal_conf_data_main(GET_VLAN_LINK, str);
+    FREE_PTR(str);
+}
+
+static inline void vlan_id_handler(vector_t tokens){
+    char *str = set_value(tokens);
+    deal_conf_data_main(GET_VLAN_ID, str);
+    FREE_PTR(str);
+}
+
+static inline void rate_limit_handler(vector_t tokens)
+{
+    char *str = set_value(tokens);
+    uint16_t lcore_id = rte_lcore_id();
+    create_conf_entry(lcore_id);
+    struct meter_param *param = &conf_entry[lcore_id]->data.meter;
+    
+    conf_entry[lcore_id]->type = NT_SET_METER;
+    strlcpy(param->szTenantID, str, sizeof(param->szTenantID));
+    FREE_PTR(str);
+}
+
+static inline void rate_limit_bandwith_handler(vector_t tokens){
+    char *str = set_value(tokens);
+    deal_conf_data_main(GET_RATE_BANDWITH, str);
+    FREE_PTR(str);
+}
+
+static inline void port_ip4_handler(vector_t tokens){
+    char *str = set_value(tokens);
+    deal_conf_data_main(GET_PORT_IP4, str);
+    FREE_PTR(str);
+}
+
+static inline void port_ip6_handler(vector_t tokens){
+    char *str = set_value(tokens);
+    deal_conf_data_main(GET_PORT_IP6, str);
+    FREE_PTR(str);
 }
 
 static inline void deal_conf_data(uint16_t type, char *src)
@@ -524,7 +722,37 @@ static inline void switch_nf_handler(vector_t tokens)
     deal_conf_data(GET_SW_NF, str);
     FREE_PTR(str);
 }
+static inline void install_port_ip(void){
+    install_keyword("port", port_ip_handler, KW_TYPE_NORMAL);
+    
+    install_sublevel();
 
+    install_keyword("ip",port_ip4_handler, KW_TYPE_NORMAL); 
+    install_keyword("ip6",port_ip6_handler, KW_TYPE_NORMAL); 
+    install_sublevel_end();
+    
+    
+}
+
+static inline void install_vlan(void){
+    install_keyword("vlan", vlan_handler, KW_TYPE_NORMAL);
+    
+    install_sublevel();
+
+    install_keyword("link", vlan_link_handler, KW_TYPE_NORMAL); 
+    install_keyword("id", vlan_id_handler, KW_TYPE_NORMAL); 
+    install_sublevel_end();
+}
+
+
+static inline void install_rate_limit(void){
+    install_keyword("rate-limiting", rate_limit_handler, KW_TYPE_NORMAL);
+    
+    install_sublevel();
+
+    install_keyword("bandwith", rate_limit_bandwith_handler, KW_TYPE_NORMAL); 
+    install_sublevel_end();
+}
 static inline void install_route(void)
 {
     install_keyword("route", route_handler, KW_TYPE_NORMAL);
@@ -632,10 +860,20 @@ static inline void install_flow_l3_keywords(void)
     install_switch();
 }
 
-static inline void install_flow_keywords(void)
+static inline void install_flow_l2_keywords(void)
+{
+    install_keyword_root("flow_l2_cfg", NULL);
+    install_port_ip();
+    install_vlan();
+    install_rate_limit();
+}
+
+static inline vector_t install_flow_keywords(void)
 {
     vrrp_init_keywords();
     install_flow_l3_keywords();
+    install_flow_l2_keywords();
+    return NULL;
 }
 
 int flow_cfgfile_init(void)
@@ -647,8 +885,16 @@ int flow_cfgfile_init(void)
 int flow_l3_init(void)
 {
     uint32_t lcore_id;
-
+    int ret = 0;
+    void *arg = NULL;
+    
     if (1) {
+        g_conf_tbl_entry_size.tbl_size = 1024;
+        g_conf_tbl_entry_size.route_entry_size = 1024 * 100;
+        g_conf_tbl_entry_size.neigh_entry_size = 1024 * 100;
+        g_conf_tbl_entry_size.vxlan_tunn_entry_size = 1024;
+        g_conf_tbl_entry_size.vrf_bind_size = 1024 * 10;
+
         /* Launch per-lcore init on every worker lcore */
         printf("call new_route_init\n");
         rte_eal_mp_remote_launch(new_route_init, NULL, SKIP_MAIN);
@@ -717,6 +963,12 @@ int flow_l3_init(void)
                 printf("api_flow_cmd_ring_init failed!!!\n");
                 return -rte_errno;
             }
+        }
+
+        ret = api_flow_cmd_ring_init(arg);
+        if(ret != 0){
+             printf("mian :api_flow_cmd_ring_init failed!!!\n");
+             return -rte_errno;
         }
 	}
 

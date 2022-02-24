@@ -96,9 +96,9 @@ ip4_forward(s_nc_param_l3 *param)
         /* flow reply ping may change the route */
         if (GET_MBUF_PRIV_DATA(mbuf)->p_priv_data_route !=
             (csp2peer(GET_CSP_FROM_MBUF(mbuf)))->route) {
-            route4_put(GET_MBUF_PRIV_DATA(mbuf)->p_priv_data_route);
+            graph_route4_put(GET_MBUF_PRIV_DATA(mbuf)->p_priv_data_route);
             GET_MBUF_PRIV_DATA(mbuf)->p_priv_data_route = (csp2peer(GET_CSP_FROM_MBUF(mbuf)))->route;
-            route4_get(GET_MBUF_PRIV_DATA(mbuf)->p_priv_data_route);
+            graph_route4_get(GET_MBUF_PRIV_DATA(mbuf)->p_priv_data_route);
         }
     } else if (rc >= FLOW_RET_FWD_BAR && rc <= FLOW_RET_FWD_BAR2) {
         *mbuf2 = NULL;

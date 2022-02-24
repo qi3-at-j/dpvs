@@ -17,6 +17,7 @@
 #include "secbasetype.h"
 //#include "../fw-base/in.h"
 #include "secpolicy_common.h"
+#include "secbasetype.h"
 #include "secpolicy.h"
 #include "secpolicy_match.h"
 #include "proto_relation.h"
@@ -161,6 +162,7 @@ SECPOLICY_EXT_FLOW_NODE_S * _secpolicy_match_ip4_FindTenantIDByPacket(INOUT SECP
     BOOL_T bIsFind = BOOL_FALSE;
     SECPOLICY_EXT_FLOW_NODE_S *pstEntry, *pstConf = NULL;
     SECPOLICY_IPADDR_NODE_S *pstIPNode;
+    
     SL_FOREACH_ENTRY(g_pstSecExtFlowHead, pstEntry,stNode)
     {
         rte_rwlock_read_lock(&pstEntry->rwlock_ext_flow);
@@ -186,7 +188,7 @@ SECPOLICY_EXT_FLOW_NODE_S * _secpolicy_match_ip4_FindTenantIDByPacket(INOUT SECP
 
         rte_rwlock_read_unlock(&pstEntry->rwlock_ext_flow);
         if (BOOL_TRUE == bIsFind)
-        {
+        {        
             pstConf = pstEntry;
             break;
         }
@@ -293,6 +295,62 @@ SECPOLICY_CONF_NODE_S * _secpolicy_match_ip6_FindCurConfList(IN SECPOLICY_PACKET
     }
 
     return pstConfNode;
+}
+
+int secpolicy_find4_TenantID(INOUT SECPOLICY_PACKET_IP4_S *pstSecPolicyPacketIP4, UCHAR *pucTenantID)
+{
+    SECPOLICY_EXT_FLOW_NODE_S * pstExtFlowNode;
+    SECPOLICY_VPC_FLOW_NODE_S * pstVPCFlowNdoe;
+    
+     if (0 == pstSecPolicyPacketIP4->uiVxlanID)
+    {
+        pstExtFlowNode = _secpolicy_match_ip4_FindTenantIDByPacket(pstSecPolicyPacketIP4);
+        if (NULL != pstExtFlowNode)
+        {
+            strlcpy(pucTenantID, pstExtFlowNode->szTenantID, TENANT_ID_MAX+1);
+            return 0;
+        }
+        
+    }
+    else
+    {
+        pstVPCFlowNdoe = _secpolicy_match_ip4_FindVxlanIDByPacket(pstSecPolicyPacketIP4);
+        if (NULL != pstVPCFlowNdoe)
+        {
+            strlcpy(pucTenantID, pstExtFlowNode->szTenantID, TENANT_ID_MAX+1);
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
+/* 查找策略节点 */
+int secpolicy_find6_TenantID(IN SECPOLICY_PACKET_IP6_S *pstSecPolicyPacketIP6, UCHAR *pucTenantID)
+{
+    SECPOLICY_EXT_FLOW_NODE_S * pstExtFlowNode;
+    SECPOLICY_VPC_FLOW_NODE_S * pstVPCFlowNdoe;
+
+    if (0 == pstSecPolicyPacketIP6->uiVxlanID)
+    {
+        pstExtFlowNode = _secpolicy_match_ip6_FindTenantIDByPacket(pstSecPolicyPacketIP6);
+        if (NULL != pstExtFlowNode)
+        {
+            strlcpy(pucTenantID, pstExtFlowNode->szTenantID, TENANT_ID_MAX+1);
+            return 0;
+        }
+    }
+    else
+    {
+        pstVPCFlowNdoe = _secpolicy_match_ip6_FindVxlanIDByPacket(pstSecPolicyPacketIP6);
+        if (NULL != pstVPCFlowNdoe)
+        {
+            strlcpy(pucTenantID, pstExtFlowNode->szTenantID, TENANT_ID_MAX+1);
+            return 0;
+        }
+    }
+
+    return -1;
 }
 
 /* 匹配报文参数 */
@@ -658,9 +716,6 @@ SECPOLICY_ACTION_E SecPolicy_Match_IP4(IN SECPOLICY_PACKET_IP4_S *pstSecPolicyPa
     stSecPolicyPacketIP4.usSPort = ntohs(stSecPolicyPacketIP4.usSPort);
     stSecPolicyPacketIP4.usDPort = ntohs(stSecPolicyPacketIP4.usDPort);
 
-    /* 当前调试阶段，vxlan部分暂定为1 */
-    stSecPolicyPacketIP4.uiVxlanID = 1;
-
     SECPOLICY_ACTION_E enAction = SECPOLICY_ACTION_DENY;
     SECPOLICY_CONF_NODE_S *pstConfNode;
     pstConfNode = _secpolicy_match_ip4_FindCurConfList(&stSecPolicyPacketIP4);
@@ -720,9 +775,6 @@ SECPOLICY_ACTION_E SecPolicy_Match_IP6(IN SECPOLICY_PACKET_IP6_S *pstSecPolicyPa
     stSecPolicyPacketIP6.uiVxlanID = stSecPolicyPacketIP6.uiVxlanID;
     stSecPolicyPacketIP6.usSPort = ntohs(stSecPolicyPacketIP6.usSPort);
     stSecPolicyPacketIP6.usDPort = ntohs(stSecPolicyPacketIP6.usDPort);
-
-    /* 当前调试阶段，vxlan部分暂定为1 */
-    stSecPolicyPacketIP6.uiVxlanID = 1;
 
     SECPOLICY_ACTION_E enAction = SECPOLICY_ACTION_DENY;
     SECPOLICY_CONF_NODE_S *pstConfNode;
@@ -885,5 +937,6 @@ SECPOLICY_DIRECTION_E SecPolicy_IP6_FlowDirect(unsigned int uiVxlanID, struct in
 
     return stSecPolicyPacketIP6.enFwDirect;
 }
+
 
 

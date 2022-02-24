@@ -17,11 +17,17 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <fcntl.h>
+#include <pthread.h>
 
 #include "flow.h"
 #include "debug_flow.h"
 #include "flow_cli.h"
 #include "flow_msg.h"
+
+pthread_mutex_t cmd_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t  cmd_cond  = PTHREAD_COND_INITIALIZER;
+pthread_mutex_t *flow_cmd_mutex = &cmd_mutex;
+pthread_cond_t  *flow_cmd_cond  = &cmd_cond;
 
 static cmd_msg_callback_t cmd_msg_callbacks[CMD_MSG_MAX];
 
@@ -51,6 +57,39 @@ cmd_msg_handler_register (cmd_msg_tpye_t type,
 }
 
 volatile static void *exec_cmd_ctx;
+/* condition variable to execute the command in master lcore */
+int
+send_cmd_msg_to_master(cmd_msg_hdr_t *msg, lcoreid_t cid)
+{
+    cmd_msg_callback_t *callback = cmd_msg_callbacks + msg->type;
+    if (!callback->handler) {
+        flow_debug_trace(FLOW_DEBUG_CLI, "%s: no handler for type %d\n",
+                         __FUNCTION__, msg->type);
+        return -1;
+    }
+
+    msg->cid = cid;
+    rte_mb();
+    exec_cmd_ctx = msg;
+    if (g_lcore_role[cid] == LCORE_ROLE_MASTER) {
+        pthread_mutex_lock(flow_cmd_mutex);
+        msg->done = CMD_MSG_STATE_START;
+        while(msg->done != CMD_MSG_STATE_FIN) {
+            pthread_cond_wait(flow_cmd_cond, flow_cmd_mutex);
+        }
+        pthread_mutex_unlock(flow_cmd_mutex);
+    } else {
+        flow_debug_trace(FLOW_DEBUG_CLI, "%s: the lcore %d role is incorrect %d\n",
+                         __FUNCTION__, cid, g_lcore_role[cid]);
+        exec_cmd_ctx = NULL;
+        return 0;
+    }
+    if (callback->echo_handler) {
+        (*callback->echo_handler)(msg, callback->cookie);
+    }
+    exec_cmd_ctx = NULL;
+    return 0;
+}
 /* busy wait for the fwd lcore to execute the command */
 int
 send_cmd_msg_to_fwd_lcore_id(cmd_msg_hdr_t *msg, lcoreid_t cid)
@@ -62,16 +101,21 @@ send_cmd_msg_to_fwd_lcore_id(cmd_msg_hdr_t *msg, lcoreid_t cid)
         return -1;
     }
 
+    msg->cid = cid;
+    rte_mb();
+    exec_cmd_ctx = msg;
     if (g_lcore_role[cid] == LCORE_ROLE_FWD_WORKER) {
-        msg->cid = cid;
-        rte_mb();
-        exec_cmd_ctx = msg;
         while(!!msg->cid) {
             rte_pause();
         }
-        if (callback->echo_handler) {
-            (*callback->echo_handler)(msg, callback->cookie);
-        }
+    } else {
+        flow_debug_trace(FLOW_DEBUG_CLI, "%s: the lcore %d role is incorrect %d\n",
+                         __FUNCTION__, cid, g_lcore_role[cid]);
+        exec_cmd_ctx = NULL;
+        return 0;
+    }
+    if (callback->echo_handler) {
+        (*callback->echo_handler)(msg, callback->cookie);
     }
     exec_cmd_ctx = NULL;
     return 0;
@@ -91,6 +135,7 @@ send_cmd_msg_to_fwd_lcore(cmd_msg_hdr_t *msg)
     RTE_LCORE_FOREACH_WORKER(i) {
         if (g_lcore_role[i] == LCORE_ROLE_FWD_WORKER) {
             msg->cid = i;
+            msg->done = CMD_MSG_STATE_START;
             rte_mb();
             exec_cmd_ctx = msg;
             while(!!msg->cid) {
@@ -117,7 +162,9 @@ exec_cmd_on_fwd_lcore(void)
     }
 
     msg = (cmd_msg_hdr_t *)exec_cmd_ctx;
-    if (msg->cid && msg->cbt && rte_lcore_id() == msg->cid) {
+    if ((msg->cid || msg->done == CMD_MSG_STATE_START) && 
+        msg->cbt && rte_lcore_id() == msg->cid) {
+        msg->done = CMD_MSG_STATE_EXEC;
         callback = cmd_msg_callbacks + msg->type;
         msg->rc = 0;
         if (callback->handler) {
@@ -128,3 +175,4 @@ exec_cmd_on_fwd_lcore(void)
     }
     return 0;
 }
+

@@ -27,6 +27,12 @@
 #include "conf/common.h"
 #include "flow.h"
 
+#ifndef TYFLOW_LEGACY
+#ifndef FLOW_L3_DONT_USE_MEMPOOL
+#define ROUTE_USE_MEMPOOL
+#endif
+#endif
+
 struct route_entry {
     uint8_t netmask;
     short metric;
@@ -39,6 +45,9 @@ struct route_entry {
     struct netif_port *port;
     rte_atomic32_t refcnt;
     uint32_t table_id;//for vrf
+#ifdef ROUTE_USE_MEMPOOL
+    struct rte_mempool *mp;
+#endif
 };
 
 struct route_entry *route4_local(uint32_t src, struct netif_port *port);

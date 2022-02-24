@@ -28,6 +28,9 @@ static const char *nud_state_names[] = {
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static int do_neigh_table_dump(cmd_blk_t *cbt, uint16_t lcore_id, uint32_t table_id)
 {
+    if (unlikely(table_id >= MAX_ROUTE_TBLS))
+        return -EINVAL;
+
     int i;
     uint16_t cnt = 0;
     struct neigh_entry *neigh_node;

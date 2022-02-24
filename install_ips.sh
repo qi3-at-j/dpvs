@@ -11,7 +11,7 @@ if [ -d "cty-suricata" ]; then
   rm -rf cty-suricata
 fi
 
-git clone git@gitlab.engineering.ctyun.cn:vfw/cty-suricata.git -b apr01
+git clone git@gitlab.ctyun.cn:ngfw/cty-suricata.git -b apr01
 cd cty-suricata
 if [ ! -d "$HOME/.rustup" ]; then
   tar -xvf rustup.tar.gz
@@ -45,4 +45,4 @@ cp ips.rules /etc/suricata/rules/
 cp apr.rules /etc/suricata/rules/
 
 echo "install complete"
-
+ 

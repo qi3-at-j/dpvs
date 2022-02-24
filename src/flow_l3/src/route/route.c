@@ -21,6 +21,7 @@
 #include "route_priv.h"
 #include "vrf_priv.h"
 #include "log_priv.h"
+#include "flow_l3_cfg_init_priv.h"
 
 #define ZERONET(x)	(((x) & rte_be_to_cpu_32(0xff000000)) == rte_be_to_cpu_32(0x00000000))
 #define LOCAL_OK	1
@@ -29,21 +30,18 @@
 #define BRD1_OK		8
 
 struct route_table *g_lcores_route_tables_p[RTE_MAX_LCORE]; // for cmd pthread
+extern struct conf_tbl_entry_size g_conf_tbl_entry_size;
 
-#define this_lcore_route_tables_p      (RTE_PER_LCORE(route_tables_lcore))
-#define this_lcore_socket_id        (RTE_PER_LCORE(socket_id_lcore))
+#define this_lcore_route_tables_p       (RTE_PER_LCORE(route_tables_lcore))
+#define this_lcore_socket_id            (RTE_PER_LCORE(socket_id_lcore))
 
 static RTE_DEFINE_PER_LCORE(struct route_table *, route_tables_lcore);
 static RTE_DEFINE_PER_LCORE(uint32_t, socket_id_lcore);
 
-static inline void route4_put_self(struct route_entry *route)
-{
-    if(route){
-        if (rte_atomic32_dec_and_test(&route->refcnt)) {
-            rte_free((void *)route);
-        }
-    }
-}
+#ifdef ROUTE_USE_MEMPOOL
+#define this_lcore_route_mempool_p      (RTE_PER_LCORE(route_mempool_lcore))
+static RTE_DEFINE_PER_LCORE(struct rte_mempool *, route_mempool_lcore);
+#endif
 
 #if 0
 static inline uint32_t __attribute__((pure))
@@ -88,15 +86,22 @@ static struct route_entry *route_new_entry(struct in_addr* dest,
                                            struct in_addr* src, unsigned long mtu,
                                            short metric)
 {
-    struct route_entry *new_route=NULL;
+    struct route_entry *new_route = NULL;
     if(!dest)
         return NULL;
+
+#ifdef ROUTE_USE_MEMPOOL
+	if (unlikely(rte_mempool_get(this_lcore_route_mempool_p, (void **)&new_route)))
+		return NULL;
+    new_route->mp = this_lcore_route_mempool_p;
+#else
     new_route = (struct route_entry *)rte_zmalloc_socket("new_route_entry", 
         sizeof(struct route_entry), RTE_CACHE_LINE_SIZE, this_lcore_socket_id);
-    if (new_route == NULL){
+    if (unlikely(new_route == NULL)) {
         return NULL;
     }
-    
+#endif
+
     new_route->dest.s_addr = dest->s_addr;
     new_route->netmask = netmask;
     new_route->flag = flag;
@@ -193,7 +198,7 @@ static int route_net_add(struct route_table *route_table,
     return 0;
 }
 
-static int route_local_add(struct route_table *route_table, 
+static int route_local_add(struct route_table *route_table,
     struct in_addr* dest, uint8_t netmask, uint32_t flag,
     struct in_addr* gw, struct netif_port *port,
     struct in_addr* src, unsigned long mtu,short metric)
@@ -266,7 +271,7 @@ static int route_del_lcore(struct route_table *route_table,
         rte_atomic32_dec(&route->refcnt);
         rte_atomic32_dec(&route_table->cnt_local);
         route->flag |= ROUTE_FLAG_DEL;
-        route4_put_self(route);
+        graph_route4_put(route);
         return 0;
     }
 
@@ -278,7 +283,7 @@ static int route_del_lcore(struct route_table *route_table,
         rte_atomic32_dec(&route->refcnt);
         rte_atomic32_dec(&route_table->cnt_net);
         route->flag |= ROUTE_FLAG_DEL;
-        route4_put_self(route);
+        graph_route4_put(route);
         return 0;
     }
 
@@ -321,9 +326,12 @@ static void route_net_dump(struct route_table *route_table)
 struct route_entry *route_lookup(uint32_t flag,
     uint32_t table_id, uint32_t dest_addr)
 {
+    if (unlikely(table_id >= MAX_ROUTE_TBLS))
+        return NULL;
+
     struct in_addr dest;
     struct route_entry *route_node = NULL;
-    
+
     dest.s_addr = dest_addr;
     struct route_table *route_table = &this_lcore_route_tables_p[table_id];
 
@@ -345,13 +353,37 @@ int new_route_init(void *arg)
     RTE_SET_USED(arg);
 
     this_lcore_socket_id = rte_lcore_to_socket_id(rte_lcore_id());
-    this_lcore_route_tables_p = (struct route_table *)rte_zmalloc_socket
-        ("new_route_table", sizeof(struct route_table) * MAX_ROUTE_TBLS, 
-        RTE_CACHE_LINE_SIZE, this_lcore_socket_id);
-    if (this_lcore_route_tables_p == NULL){
+
+#ifdef ROUTE_USE_MEMPOOL
+    char name[RTE_MEMZONE_NAMESIZE] = {0};
+    int ret = snprintf(name, sizeof(name), "route_mempool_%u", rte_lcore_id());
+	if (unlikely(ret < 0 || ret >= (int)sizeof(name))) {
+        return -EINVAL;
+	}
+    this_lcore_route_mempool_p = rte_mempool_create(
+        name,
+        g_conf_tbl_entry_size.route_entry_size,
+        sizeof(struct route_entry),
+        0,
+        0,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        this_lcore_socket_id,
+        MEMPOOL_F_SP_PUT | MEMPOOL_F_SC_GET);
+    if (unlikely(this_lcore_route_mempool_p == NULL)) {
         return -ENOMEM;
     }
-        
+#endif
+
+    this_lcore_route_tables_p = (struct route_table *)rte_zmalloc_socket
+        ("new_route_table", sizeof(struct route_table) * MAX_ROUTE_TBLS,
+        RTE_CACHE_LINE_SIZE, this_lcore_socket_id);
+    if (unlikely(this_lcore_route_tables_p == NULL)) {
+        return -ENOMEM;
+    }
+
     for (j = 0; j < MAX_ROUTE_TBLS; j++) {
         for (i = 0; i < LOCAL_ROUTE_TAB_SIZE; i++) {
             INIT_LIST_HEAD(&this_lcore_route_tables_p[j].local_route_table[i]);
@@ -377,8 +409,10 @@ int new_route_add(void *arg)
     }
 
     route_entry = (struct route_entry *)arg;
-    route_table = &this_lcore_route_tables_p[route_entry->table_id];
+    if (unlikely(route_entry->table_id >= MAX_ROUTE_TBLS))
+        return -EINVAL;
 
+    route_table = &this_lcore_route_tables_p[route_entry->table_id];
     return(route_add_lcore(route_table, &route_entry->dest, route_entry->netmask, 
         route_entry->flag, &route_entry->gw, route_entry->port, 
         &route_entry->src, route_entry->mtu, route_entry->metric));
@@ -388,14 +422,16 @@ int new_route_del(void *arg)
 {
     struct route_table *route_table;
     struct route_entry *route_entry;
-    
+
     if (unlikely(arg == NULL)) {
         return -EINVAL;
     }
 
     route_entry = (struct route_entry *)arg;
-    route_table = &this_lcore_route_tables_p[route_entry->table_id];
+    if (unlikely(route_entry->table_id >= MAX_ROUTE_TBLS))
+        return -EINVAL;
 
+    route_table = &this_lcore_route_tables_p[route_entry->table_id];
     return(route_del_lcore(route_table, &route_entry->dest, route_entry->netmask, 
         route_entry->flag, &route_entry->gw, route_entry->port, 
         &route_entry->src, route_entry->mtu, route_entry->metric));
@@ -418,7 +454,7 @@ int route_table_clear(void *arg)
                 &this_lcore_route_tables_p[table_id].local_route_table[i], list){
                 list_del(&route_node->list);
                 rte_atomic32_dec(&this_lcore_route_tables_p[table_id].cnt_local);
-                route4_put_self(route_node);
+                graph_route4_put(route_node);
             }
         }
     }
@@ -428,7 +464,7 @@ int route_table_clear(void *arg)
             &this_lcore_route_tables_p[table_id].net_route_table, list){
             list_del(&route_node->list);
             rte_atomic32_dec(&this_lcore_route_tables_p[table_id].cnt_net);
-            route4_put_self(route_node);
+            graph_route4_put(route_node);
         }
     }
 

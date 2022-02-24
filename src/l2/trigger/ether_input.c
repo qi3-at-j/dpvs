@@ -38,13 +38,32 @@ char const* ether_input_next_node_str[] = {
 	[ETHER_INPUT_NEXT_PKT_DROP] = "drop",
 	[ETHER_INPUT_NEXT_L2_VLAN]  = "vlan",
 	[ETHER_INPUT_NEXT_L2_BRIDGE] = "bridge",
-	[ETHER_INPUT_NEXT_L3_IPV4] ="ip4_rcv",
+	[ETHER_INPUT_NEXT_L3_IPV4] =  "ip4_rcv",
+	[ETHER_INPUT_NEXT_L3_IPV6] =  "ip6_rcv",
+	[ETHER_INPUT_NEXT_ARP] = "arp",
 };
 
+char const *get_index_prinf(int index){
+    char const *p = NULL;
+    if ((index == ETHER_INPUT_NEXT_PKT_DROP )||
+        (index == ETHER_INPUT_NEXT_L2_VLAN ) ||
+        (index == ETHER_INPUT_NEXT_L2_BRIDGE ) ||
+        (index == ETHER_INPUT_NEXT_L3_IPV4 ) ||
+        (index == ETHER_INPUT_NEXT_L3_IPV6 ) ||
+        (index == ETHER_INPUT_NEXT_ARP ))
+        {
+            p = ether_input_next_node_str[index];
+        }else{
+            p = "unknow now.";
+        }
+
+    return p;
+}
 static inline enum ether_input_next_nodes ether_input_deal_and_trans_to_next_index(struct rte_mbuf *mbuf)
 {
 	enum ether_input_next_nodes index = ETHER_INPUT_NEXT_PKT_DROP;
 	struct rte_ether_hdr *eth_hdr;
+    uint16_t ether_type;
 
     /* recv from nic,not vxlan node */
     if (mbuf->packet_type != -1) {
@@ -58,14 +77,20 @@ static inline enum ether_input_next_nodes ether_input_deal_and_trans_to_next_ind
 	*/
 	struct netif_port *dev = netif_port_get(mbuf->port);
 	if (unlikely(!dev)) {
-		debug_l2_packet_trace(L2_DEBUG_ETH_INPUT, mbuf, DETAIL_ON, "[ether_input] can't get dev by port=%d, drop!\n", mbuf->port);
+		debug_l2_packet_trace(L2_DEBUG_ETH_INPUT, mbuf, DETAIL_ON, "[ether_input] can't get dev by port=%u, drop!\n", mbuf->port);
         return index;
     }
 	eth_hdr = rte_pktmbuf_mtod(mbuf, struct rte_ether_hdr *);
 	mbuf->packet_type = eth_type_parse(eth_hdr, dev);
 	mbuf->l2_len = sizeof(struct rte_ether_hdr);
-	
-	switch(ntohs(eth_hdr->ether_type)){
+
+    ether_type = ntohs(eth_hdr->ether_type);
+    index = l2_meter_proc(mbuf, ether_type);
+    if(ETHER_INPUT_NEXT_PKT_DROP == index){
+        return index;
+    }
+    
+	switch(ether_type){
 		case RTE_ETHER_TYPE_VLAN:
 			index = ETHER_INPUT_NEXT_L2_VLAN;
 			break;
@@ -97,7 +122,8 @@ static inline enum ether_input_next_nodes ether_input_deal_and_trans_to_next_ind
 		index = ETHER_INPUT_NEXT_L2_VLAN;
 	}
 
-	debug_l2_packet_trace(L2_DEBUG_ETH_INPUT, mbuf, DETAIL_OFF, "[ether_input] next node is %s!\n", ether_input_next_node_str[index]);	
+    debug_l2_packet_trace(L2_DEBUG_ETH_INPUT, mbuf, DETAIL_OFF, "[ether_input] next node is %s!\n", get_index_prinf(index));	
+	
 	mbuf_dev_set(mbuf, dev);
 	return index;
 }

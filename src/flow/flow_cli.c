@@ -37,6 +37,7 @@
 #include "parser/parser.h"
 #include "neigh.h"
 #include "scheduler.h"
+#include <pthread.h>
 
 #include <rte_arp.h>
 #include <netinet/in.h>
@@ -59,7 +60,7 @@ flow_get_total_connection(void)
  * show one flow connection in brief format, which also indicates
  * connection location
  */
-static void 
+static int
 show_one_flow_connection (flow_connection_t *fcp, void *args)
 {
     cmd_blk_t *cbt = (cmd_blk_t *)args;
@@ -108,6 +109,8 @@ show_one_flow_connection (flow_connection_t *fcp, void *args)
 		tyflow_cmdline_printf(cbt->cl, ",wsf %d",csp->wsf);/*wsf sync*/
 	}
     tyflow_cmdline_printf(cbt->cl, "\n");
+
+    return 0;
 }
 
 /* no parameters provided means ok, select it */
@@ -224,7 +227,7 @@ traverse_all_flow_connection(connection_op_para_t *paras, void *args,
 	                         selected_connection_vector_t vector)
 {
 	int total;
-	int i, cnt;
+	int i, cnt, rc;
 	flow_connection_t *fcp;
 
 	total = flow_get_total_connection();
@@ -235,9 +238,11 @@ traverse_all_flow_connection(connection_op_para_t *paras, void *args,
 		if (is_fcp_valid(fcp)) {
             fcp_rwl_read_unlock(fcp);
 			if (select_this_connection(fcp, paras)) {
-				cnt++;
 				if (vector) {
-					(*vector)(fcp, args);
+					rc = (*vector)(fcp, args);
+                    if (rc == 0) {
+                        cnt++;
+                    }
 				}
 				
 				/*	to prevent hold cpu too long */
@@ -393,6 +398,10 @@ show_flow_connection(cmd_msg_hdr_t *msg_hdr, void *cookie)
             tyflow_cmdline_printf(((cmd_blk_t *)msg_hdr->cbt)->cl, 
                                   "  connections on lcore%d: %d\n", 
                                   rte_lcore_id(), msg_hdr->rc);
+            pthread_mutex_lock(flow_cmd_mutex);
+            msg_hdr->done = CMD_MSG_STATE_FIN;
+            pthread_cond_signal(flow_cmd_cond);
+            pthread_mutex_unlock(flow_cmd_mutex);
             break;
         case FLOW_CMD_MSG_SUBTYPE_DETAIL:
             fcp = this_flowConnTable + ctx->paras.fcid;
@@ -432,6 +441,19 @@ show_flow_connection(cmd_msg_hdr_t *msg_hdr, void *cookie)
         case FLOW_CMD_MSG_SUBTYPE_HASHTOP:
             show_flow_hash_top(msg_hdr);
             break;
+        case FLOW_CMD_MSG_SUBTYPE_DENY:
+            /* traverse all connections. */
+            msg_hdr->rc = traverse_all_flow_connection(&ctx->paras, 
+                                                       msg_hdr->cbt, 
+                                                       show_one_flow_connection);
+            tyflow_cmdline_printf(((cmd_blk_t *)msg_hdr->cbt)->cl, 
+                                  "  deny connections on lcore%d: %d\n", 
+                                  rte_lcore_id(), msg_hdr->rc);
+            pthread_mutex_lock(flow_cmd_mutex);
+            msg_hdr->done = CMD_MSG_STATE_FIN;
+            pthread_cond_signal(flow_cmd_cond);
+            pthread_mutex_unlock(flow_cmd_mutex);
+            break;
         default:
             tyflow_cmdline_printf(((cmd_blk_t *)msg_hdr->cbt)->cl, 
                                   "  unsupport operation\n");
@@ -444,6 +466,12 @@ out:
 static void
 flow_parse_para(cmd_blk_t *cbt, connection_op_para_t *paras)
 {
+    /* deny */
+    if (cbt->which[0] == 6) {
+        paras->fcflag |= FC_DENY;
+        paras->mask |= CLR_GET_CONN_FCFLAG;
+    }
+
     /* src ip */
     if (cbt->which[1] == 1) {
         paras->src_ip = cbt->ipv4[0];
@@ -518,6 +546,7 @@ show_flow_connection_echo(cmd_msg_hdr_t *msg_hdr, void *cookie)
             *fc_cnt += msg_hdr->rc;
             break;
         case FLOW_CMD_MSG_SUBTYPE_ALL:
+        case FLOW_CMD_MSG_SUBTYPE_DENY:
             *fc_cnt += msg_hdr->rc;
             break;
         case FLOW_CMD_MSG_SUBTYPE_DETAIL:
@@ -542,6 +571,7 @@ show_flow_connection_cli(cmd_blk_t *cbt)
     flow_ctx.msg_hdr.type = CMD_MSG_FLOW_SHOW;
     flow_ctx.msg_hdr.length = sizeof(show_flow_ctx_t);
     flow_ctx.msg_hdr.rc = 0;
+    flow_ctx.msg_hdr.done = 0;
     flow_ctx.msg_hdr.cbt = cbt;
     paras = &flow_ctx.paras;
     memset(paras, 0, sizeof(connection_op_para_t));
@@ -564,7 +594,10 @@ show_flow_connection_cli(cmd_blk_t *cbt)
 #ifdef TYFLOW_PER_THREAD
             send_cmd_msg_to_fwd_lcore(&flow_ctx.msg_hdr);
 #else
-            send_cmd_msg_to_fwd_lcore_id(&flow_ctx.msg_hdr, rte_atomic32_read(&this_flow_conn_ager_ctx.cid));
+            /* print too many fcp will make the worker thread too busy to handle packet,
+             * use the main thread to do it
+             */
+            send_cmd_msg_to_master(&flow_ctx.msg_hdr, rte_get_master_lcore());
 #endif
             tyflow_cmdline_printf(cbt->cl, "total number %d\n", fc_cnt);
             break;
@@ -598,6 +631,18 @@ show_flow_connection_cli(cmd_blk_t *cbt)
             send_cmd_msg_to_fwd_lcore_id(&flow_ctx.msg_hdr, rte_atomic32_read(&this_flow_conn_ager_ctx.cid));
 #endif
             break;
+        case 6:
+            flow_ctx.msg_hdr.subtype = FLOW_CMD_MSG_SUBTYPE_DENY;
+#ifdef TYFLOW_PER_THREAD
+            send_cmd_msg_to_fwd_lcore(&flow_ctx.msg_hdr);
+#else
+            /* print too many fcp will make the worker thread too busy to handle packet,
+             * use the main thread to do it
+             */
+            send_cmd_msg_to_master(&flow_ctx.msg_hdr, rte_get_master_lcore());
+#endif
+            tyflow_cmdline_printf(cbt->cl, "deny number %d\n", fc_cnt);
+            break;
         default:
             tyflow_cmdline_printf(cbt->cl, "unknown command\n");
             break;
@@ -606,9 +651,11 @@ show_flow_connection_cli(cmd_blk_t *cbt)
 }
 
 EOL_NODE(flow_conn_eol, show_flow_connection_cli);
+/* deny */
+KW_NODE_WHICH(flow_conn_deny, flow_conn_eol, flow_conn_eol, "deny", "show deny flow connection", 1, 6);
 /* policy */
 VALUE_NODE(flow_conn_policyid, flow_conn_eol, none, "policy id", 11, NUM);
-KW_NODE_WHICH(flow_conn_policy, flow_conn_policyid, flow_conn_eol, "policy", "specific a policy", 8, 1);
+KW_NODE_WHICH(flow_conn_policy, flow_conn_policyid, flow_conn_deny, "policy", "specific a policy", 8, 1);
 /* vrf id */
 VALUE_NODE(flow_conn_vrfid, flow_conn_policy, none, "vrf id", 10, NUM);
 KW_NODE_WHICH(flow_conn_vrf, flow_conn_vrfid, flow_conn_policy, "vrf", "specific a vrf", 7, 1);
@@ -828,8 +875,41 @@ clear_flow_cli(cmd_blk_t *cbt)
     flow_ctx.msg_hdr.length = sizeof(clear_flow_ctx_t);
     flow_ctx.msg_hdr.rc = 0;
     flow_ctx.msg_hdr.cbt = cbt;
-    send_cmd_msg_to_fwd_lcore(&flow_ctx.msg_hdr);
-    tyflow_cmdline_printf(cbt->cl, "all flow connection counter are cleared\n");
+
+    switch(cbt->which[0]) {
+        case 1:
+            flow_ctx.msg_hdr.subtype = FLOW_CMD_MSG_CLEAR_COUNTER;
+            send_cmd_msg_to_fwd_lcore(&flow_ctx.msg_hdr);
+            tyflow_cmdline_printf(cbt->cl, "all flow connection counter are cleared\n");
+            break;
+        case 2:
+            flow_ctx.msg_hdr.subtype = FLOW_CMD_MSG_CLEAR_FCP;
+#ifdef TYFLOW_PER_THREAD
+            send_cmd_msg_to_fwd_lcore(&flow_ctx.msg_hdr);
+#else
+            send_cmd_msg_to_fwd_lcore_id(&flow_ctx.msg_hdr, rte_atomic32_read(&this_flow_conn_ager_ctx.cid));
+#endif
+            tyflow_cmdline_printf(cbt->cl, "clear %d flow connections\n", flow_ctx.msg_hdr.rc);
+            break;
+        default:
+            tyflow_cmdline_printf(cbt->cl, "unknown command\n");
+            return -1;
+    }
+
+    return 0;
+}
+
+/*
+ * show one flow connection in brief format, which also indicates
+ * connection location
+ */
+static int
+clear_one_flow_connection (flow_connection_t *fcp, __rte_unused void *args)
+{
+    if (fcp->fcflag & FC_TIME_NO_REFRESH) {
+        return -1;
+    }
+    set_fcp_invalid(fcp, FC_CLOSE_CLI);
     return 0;
 }
 
@@ -839,19 +919,32 @@ clear_flow_connection(cmd_msg_hdr_t *msg_hdr, void *cookie)
     int i;
     assert(msg_hdr->type == CMD_MSG_FLOW_CLEAR);
 
-    for (i = FLOW_COUNTER_MUTAB_START; i < FLOW_COUNTER_MUTAB_END; i++) {
-        this_flow_counter[i].counter = 0;
+    switch(msg_hdr->subtype) {
+        case FLOW_CMD_MSG_CLEAR_COUNTER:
+            for (i = FLOW_COUNTER_MUTAB_START; i < FLOW_COUNTER_MUTAB_END; i++) {
+                this_flow_counter[i].counter = 0;
+            }
+
+            tyflow_cmdline_printf(((cmd_blk_t *)msg_hdr->cbt)->cl, 
+                    "  lcore%d cleared the flow connection counter\n", 
+                    rte_lcore_id());
+            return 0;
+        case FLOW_CMD_MSG_CLEAR_FCP:
+            /* traverse all connections. performance may be an issue in heavy load */
+            msg_hdr->rc = traverse_all_flow_connection(NULL, NULL, clear_one_flow_connection);
+            break;
+        default:
+            break;
     }
 
-    tyflow_cmdline_printf(((cmd_blk_t *)msg_hdr->cbt)->cl, 
-                          "  lcore%d cleared the flow connection counter\n", 
-                          rte_lcore_id());
     return 0;
 }
 
 EOL_NODE(flow_clear_eol, clear_flow_cli);
+/* clear flow connection all */
+KW_NODE_WHICH(flow_clear_conn_all, flow_clear_eol, none, "all", "clear all flow connections", 1, 2);
 /* clear flow connection counter */
-KW_NODE(flow_clear_conn_counter, flow_clear_eol, none, "counter", "clear flow connection counter");
+KW_NODE_WHICH(flow_clear_conn_counter, flow_clear_eol, flow_clear_conn_all, "counter", "clear flow connection counter", 1, 1);
 /* clear flow connection */
 KW_NODE(flow_clear_conn, flow_clear_conn_counter, none, "connection", "clear flow connection related items");
 /* clear flow */

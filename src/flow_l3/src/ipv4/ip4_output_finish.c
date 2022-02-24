@@ -50,7 +50,7 @@ ip4_output_finish(s_nc_param_l3 *param)
             __func__, dst_addr);
 
         struct netif_port* port = route_node->port;
-        route4_put(route_node);
+        graph_route4_put(route_node);
         if (unlikely(port == NULL)) {
             L3_DEBUG_TRACE(L3_ERR, "%s node:out port is null!\n", __FUNCTION__);
             return IP4_OUTPUT_FINISH_NEXT_DROP;

@@ -473,7 +473,11 @@ flow_find_connection_v6(struct rte_mbuf *mbuf)
     if (fcp) {
         flow_print_basic("  existing connection found. id %d\n", fcp2id(fcp));
         SET_CSP_TO_MBUF(mbuf, csp);
-        if (IS_CSP_DISABLE(csp)) {
+        if (fcp->fcflag & FC_DENY) {
+            flow_print_basic("  flow deny connection. drop the packet\n");
+            this_flow_counter[FLOW_ERR_FCP_DENY].counter++;
+            return -1;
+        } else if (IS_CSP_DISABLE(csp)) {
             /* do something */
         }
     } else {

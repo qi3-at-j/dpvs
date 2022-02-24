@@ -32,9 +32,16 @@ typedef struct cmd_msg_hdr_ {
     uint16_t subtype;
     uint16_t length;
     uint32_t rc;
+    uint32_t done;
     void     *cbt; /* cmd_blk_t */
     uint8_t  data[0];
 } cmd_msg_hdr_t;
+
+typedef enum {
+    CMD_MSG_STATE_START = 100,
+    CMD_MSG_STATE_EXEC  = 200,
+    CMD_MSG_STATE_FIN   = 300,
+} cmd_msg_state_t;
 
 typedef enum {
     /* do not use the first element */
@@ -54,6 +61,9 @@ typedef struct {
     cmd_msg_handler_t echo_handler;
     void *cookie;
 } cmd_msg_callback_t;
+
+extern pthread_mutex_t *flow_cmd_mutex;
+extern pthread_cond_t  *flow_cmd_cond;
 
 int
 cmd_msg_handler_register (cmd_msg_tpye_t type, 

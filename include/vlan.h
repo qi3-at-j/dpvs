@@ -24,6 +24,7 @@
 #define __DPVS_VLAN_H__
 #include <linux/if_ether.h>
 #include "conf/common.h"
+#include "conf/vlan.h"
 #include "list.h"
 #include "netif.h"
 
@@ -110,6 +111,7 @@ int vlan_rcv(struct rte_mbuf *mbuf, struct netif_port *rdev);
 int vlan_init(void);
 
 inline int vlan_untag_mbuf(struct rte_mbuf *mbuf);
+int vlan_conf_recover(struct vlan_param *param);
 
 static inline int vlan_insert_tag(struct rte_mbuf *mbuf,
                                   __be16 proto, __be16 id)

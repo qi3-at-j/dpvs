@@ -132,7 +132,7 @@ def vrf_add(obj, vrf):
         n.add(k)
         v.add(n)
 
-        n = Block('ips_cfg')
+        n = Block('dpi_cfg')
         v.add(n)
 
         n = Block('ips_policy')

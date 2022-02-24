@@ -9,6 +9,12 @@
 
 #define VXLAN_TUNNEL_BUCKETS_NUM (1 << 4)
 
+#ifndef TYFLOW_LEGACY
+#ifndef FLOW_L3_DONT_USE_MEMPOOL
+#define VXLAN_TUNN_USE_MEMPOOL
+#endif
+#endif
+
 struct vxlan_tunnel_entry {
     struct hlist_node hnode;
 	uint32_t vni;
@@ -20,6 +26,10 @@ struct vxlan_tunnel_entry {
     /* ipv4 */
     uint8_t ttl;
     uint8_t tos;
+
+#ifdef VXLAN_TUNN_USE_MEMPOOL
+    struct rte_mempool *mp;
+#endif
 };
 
 struct vxlan_tunnel_table {

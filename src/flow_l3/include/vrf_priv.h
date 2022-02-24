@@ -4,6 +4,13 @@
 
 #include "route_priv.h"
 #include "list.h"
+#include "flow_l3_cfg_init_priv.h"
+
+#ifndef TYFLOW_LEGACY
+#ifndef FLOW_L3_DONT_USE_MEMPOOL
+#define VRF_USE_MEMPOOL
+#endif
+#endif
 
 #define VRF_USE_DEV_HASH 0
 #if VRF_USE_DEV_HASH
@@ -13,7 +20,10 @@
 #endif
 #define VRF_USE_IP_HASH 1
 
-#define MAX_ROUTE_TBLS (1 << 10)
+extern struct conf_tbl_entry_size g_conf_tbl_entry_size;
+//#define MAX_ROUTE_TBLS (1 << 10)
+#define MAX_ROUTE_TBLS (g_conf_tbl_entry_size.tbl_size)
+
 #define GLOBAL_ROUTE_TBL_ID 0
 
 #define VRF_BUCKETS_NUM (1 << 4)
@@ -53,6 +63,10 @@ struct net_vrf {
 	struct list_head me_list;
     /* entry in vni or ip map */
     struct hlist_node hnode;
+
+#ifdef VRF_USE_MEMPOOL
+    struct rte_mempool *mp;
+#endif
 };
 
 struct vrf_map_elem {
@@ -60,6 +74,10 @@ struct vrf_map_elem {
     struct list_head vrf_list; /* VRFs registered to this table */
 	uint32_t table_id;
     rte_atomic32_t cnt;
+
+#ifdef VRF_USE_MEMPOOL
+    struct rte_mempool *mp;
+#endif
 };
 
 struct vrf_map {

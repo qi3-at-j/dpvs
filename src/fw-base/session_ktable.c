@@ -963,12 +963,11 @@ VOID SESSION_KDestroy(IN VOID *pSession)
     UCHAR ucSessionType;
 	flow_connection_t *fcp;
 	conn_sub_t *csp;
-	SESSION_S *pstSession = (SESSION_S *)pSession;
 
-    /* 设置快转失效 */
+	SESSION_S *pstSession = (SESSION_S *)pSession;
     csp = pstSession->stSessionBase.pCache[SESSION_DIR_ORIGINAL];
-	fcp = csp2base(csp);	
-	set_fcp_invalid(fcp, FC_CLOSE_OTHER);
+    fcp = csp2base(csp);	
+    flow_free_this_conn(fcp);
 
     ucSessionType = pstSession->stSessionBase.ucSessionType;
 	
@@ -976,6 +975,7 @@ VOID SESSION_KDestroy(IN VOID *pSession)
     SESSION_KModuleExtDestroy(pstSession);
     
     rte_mempool_put(g_apstSessPool[ucSessionType], pstSession);
+
 
     return;
 }
@@ -1234,6 +1234,8 @@ DATE        NAME         DESCRIPTION
 STATIC VOID SESSION_Delete(IN SESSION_S *pstSession)
 {
     SESSION_CTRL_S *pstSessionMdc;
+	flow_connection_t *fcp;
+	conn_sub_t *csp;
 
     pstSessionMdc = SESSION_CtrlData_Get();
 
@@ -1264,6 +1266,11 @@ STATIC VOID SESSION_Delete(IN SESSION_S *pstSession)
     /* 删除所有本会化创建的关联表 */
     SESSION_KRelationListProc(&(pstSession->stRelationList), pstSession);
     //rte_spinlock_unlock(&(pstSession->stLock));
+
+    /* 设置快转失效 */
+    csp = pstSession->stSessionBase.pCache[SESSION_DIR_ORIGINAL];
+    fcp = csp2base(csp);	
+    set_fcp_invalid(fcp, FC_CLOSE_OTHER);
 
     SESSION_KPut(pstSession);
 
@@ -1320,6 +1327,8 @@ STATIC VOID SESSION6_KRelationListProc(IN DL_HEAD_S *pstRelationList, IN SESSION
 VOID SESSION6_Delete(IN SESSION_S *pstSession)
 {
     SESSION_CTRL_S *pstSessionMdc;
+	flow_connection_t *fcp;
+	conn_sub_t *csp;
 
     /* 摘hash表和删除，确保打了delete标记的会话不再用于报文匹配 */
     if (!SESSION_TABLE_IS_TABLEFLAG(&(pstSession->stSessionBase), SESSION_CACHE_DELETED))
@@ -1356,6 +1365,11 @@ VOID SESSION6_Delete(IN SESSION_S *pstSession)
     /* 删除所有本会化创建的关联表 */
     SESSION6_KRelationListProc(&(pstSession->stRelationList), pstSession);
     //rte_spinlock_unlock(&(pstSession->stLock));
+
+    /* 设置快转失效 */
+    csp = pstSession->stSessionBase.pCache[SESSION_DIR_ORIGINAL];
+    fcp = csp2base(csp);	
+    set_fcp_invalid(fcp, FC_CLOSE_OTHER);
 
     SESSION6_KPut(pstSession);
 

@@ -22,6 +22,22 @@ cur_ips_tools_dir=$cur_work_dir/ips_tools
 tmp_file=tmp_res.del
 conf_file=dpvs.conf
 
+unset_suricata()
+{
+	suricata_pid=$(ps aux | grep "suricata" | grep -v grep | awk -F " " '{print $2}')
+	if [ -n "$suricata_pid" ];then
+		kill $suricata_pid
+	fi
+}
+
+unset_fw_agent()
+{
+        fw_agent_pid=$(ps aux | grep "fw-agent" | grep -v grep | awk -F " " '{print $2}')
+        if [ -n "$fw_agent_pid" ];then
+                kill $fw_agent_pid
+        fi
+}
+
 unset_vfio()
 {
 	echo 0 > /sys/module/vfio/parameters/enable_unsafe_noiommu_mode
@@ -400,6 +416,8 @@ set_ips_env()
 
 unset_flow_env()
 {
+	unset_suricata
+	unset_fw_agent
 	unset_dev
 	unset_vfio
 	unset_ko

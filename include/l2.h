@@ -22,7 +22,7 @@ void register_namespace_net(struct netif_port* dev);
 void unregister_namespace_net(struct netif_port* dev);
 int call_netdevice_notifiers(unsigned long val, struct netif_port *dev);
 int register_netdevice_notifier(struct notifier_block *nb);
-
+int proc_auto_meter_recover(UCHAR        *pcTenantID, uint32_t bandwith);
 
 
 #endif /*__L2_H__*/
